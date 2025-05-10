@@ -1,4 +1,4 @@
-<!-- SillyTavern/data/your_user_handle/extensions/remove-br-tags/settings_display.html -->
+<!-- SillyTavern/data/your_user_handle/extensions/remove-br-tags-extension/settings_display.html -->
 <div class="br-tags-visibility-settings">
     <h4>BR标签显隐设置</h4>
     <div class="inline-drawer">
@@ -31,78 +31,85 @@
 
 <script>
     (function() {
-        if (!window.SillyTavern || !SillyTavern.getContext) {
-            console.error("BR标签显隐控制: SillyTavern context not found.");
+        // 确保 SillyTavern 上下文和核心API在脚本执行时可用
+        if (!window.SillyTavern || !window.SillyTavern.getContext || !window.SillyTavern.extension_settings || !window.SillyTavern.saveSettingsDebounced) {
+            console.error("BR标签显隐控制 (settings): SillyTavern core objects (getContext, extension_settings, saveSettingsDebounced) not found.");
             return;
         }
 
-        const context = SillyTavern.getContext();
-        const { extensionSettings, saveSettingsDebounced } = context;
-        const MODULE_NAME = 'brTagsVisibilityExtension'; // 更新模块名
+        const { extension_settings, saveSettingsDebounced } = SillyTavern;
+
+        // 插件的文件夹名称，将用作设置的键
+        const PLUGIN_FOLDER_NAME = 'remove-br-tags-extension';
 
         const chatBrToggle = document.getElementById('ext_hide_chat_br_toggle');
         const allBrToggle = document.getElementById('ext_hide_all_br_toggle');
 
         if (!chatBrToggle || !allBrToggle) {
-            console.error("BR标签显隐控制: Toggle checkboxes not found.");
+            console.error(`BR标签显隐控制 (settings - ${PLUGIN_FOLDER_NAME}): Toggle checkboxes not found.`);
             return;
         }
 
-        // 获取或初始化设置
-        function getModuleSettings() {
+        // 获取或初始化此插件的设置
+        function getPluginSettings() {
             const defaultSettings = {
                 hideChatBr: false,
                 hideAllBr: false
             };
-            if (!extensionSettings[MODULE_NAME]) {
-                extensionSettings[MODULE_NAME] = { ...defaultSettings };
-            }
-            // 确保所有键都存在
-            for (const key in defaultSettings) {
-                if (typeof extensionSettings[MODULE_NAME][key] === 'undefined') {
-                    extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+            if (!extension_settings[PLUGIN_FOLDER_NAME]) {
+                extension_settings[PLUGIN_FOLDER_NAME] = { ...defaultSettings };
+            } else {
+                // 确保所有默认键都存在，以处理插件更新后可能新增的设置项
+                for (const key in defaultSettings) {
+                    if (typeof extension_settings[PLUGIN_FOLDER_NAME][key] === 'undefined') {
+                        extension_settings[PLUGIN_FOLDER_NAME][key] = defaultSettings[key];
+                    }
                 }
             }
-            return extensionSettings[MODULE_NAME];
+            return extension_settings[PLUGIN_FOLDER_NAME];
         }
 
-        // 加载设置并更新UI
-        function loadSettings() {
-            const settings = getModuleSettings();
+        // 加载设置并更新UI复选框的状态
+        function loadSettingsToUI() {
+            const settings = getPluginSettings();
             chatBrToggle.checked = settings.hideChatBr;
             allBrToggle.checked = settings.hideAllBr;
 
-            // 初始加载时应用样式
-            if (window.extensions && window.extensions.brTagsVisibility && typeof window.extensions.brTagsVisibility.applyVisibility === 'function') {
-                window.extensions.brTagsVisibility.applyVisibility(settings);
+            // 初始加载时，也触发一次样式应用 (通过调用 index.js 中暴露的函数)
+            // 确保 window.extensions.removeBrTagsExtension 结构存在 (与 index.js 中暴露的名称一致)
+            if (window.extensions && window.extensions[PLUGIN_FOLDER_NAME] && typeof window.extensions[PLUGIN_FOLDER_NAME].applyVisibility === 'function') {
+                window.extensions[PLUGIN_FOLDER_NAME].applyVisibility(settings);
             }
         }
 
-        // 处理聊天消息BR开关变化
+        // 当复选框状态改变时，调用此函数以触发 index.js 中的样式更新
+        function triggerApplyVisibilityFromIndex(currentSettings) {
+            if (window.extensions && window.extensions[PLUGIN_FOLDER_NAME] && typeof window.extensions[PLUGIN_FOLDER_NAME].applyVisibility === 'function') {
+                window.extensions[PLUGIN_FOLDER_NAME].applyVisibility(currentSettings);
+            } else {
+                console.warn(`BR标签显隐控制 (settings - ${PLUGIN_FOLDER_NAME}): index.js 中的 applyVisibility 函数未找到。`);
+            }
+        }
+
+        // 监听聊天BR显隐开关的变化
         chatBrToggle.addEventListener('change', function() {
-            const settings = getModuleSettings();
+            const settings = getPluginSettings();
             settings.hideChatBr = this.checked;
-            // 如果“隐藏全部”是开启的，那么“隐藏聊天”开启与否不重要，但仍保存其状态
-            saveSettingsDebounced();
-            triggerApplyVisibility(settings);
+            saveSettingsDebounced(); // 保存更改到 SillyTavern 的持久化存储
+            triggerApplyVisibilityFromIndex(settings); // 立即应用视觉更改
         });
 
-        // 处理整个界面BR开关变化
+        // 监听整个界面BR显隐开关的变化
         allBrToggle.addEventListener('change', function() {
-            const settings = getModuleSettings();
+            const settings = getPluginSettings();
             settings.hideAllBr = this.checked;
             saveSettingsDebounced();
-            triggerApplyVisibility(settings);
+            triggerApplyVisibilityFromIndex(settings);
         });
 
-        function triggerApplyVisibility(settings) {
-            if (window.extensions && window.extensions.brTagsVisibility && typeof window.extensions.brTagsVisibility.applyVisibility === 'function') {
-                window.extensions.brTagsVisibility.applyVisibility(settings);
-            } else {
-                console.warn("BR标签显隐控制: index.js中的applyVisibility函数未找到。");
-            }
-        }
+        // 初始加载设置到UI
+        loadSettingsToUI();
 
-        loadSettings();
+        console.log(`BR标签显隐控制 (settings for ${PLUGIN_FOLDER_NAME}): UI script initialized.`);
     })();
 </script>
