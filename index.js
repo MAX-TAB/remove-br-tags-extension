@@ -1,164 +1,177 @@
-// SillyTavern/public/scripts/extensions/third-party/remove-br-tags-extension/index.js
-'use strict';
+// remove-br-tags-extension/index.js
 
-// 从扩展助手脚本导入 (路径相对于当前文件)
-import {
-    extension_settings,
-    // getContext, // 范例中没有在顶层使用 getContext 来获取设置，而是直接用 extension_settings
-    // loadExtensionSettings, // 范例中是自己写的 loadSettings 函数
-} from '../../extensions.js'; // 向上两级到 public/scripts/extensions/extensions.js
+// 导入SillyTavern的必要模块
+import { extension_settings, getContext, loadExtensionSettings } from "../../../extensions.js";
+import { saveSettingsDebounced } from "../../../../script.js";
 
-// 从主脚本导入 (路径相对于当前文件)
-import { saveSettingsDebounced } from '../../../script.js'; // 向上三级到 public/scripts/script.js
+// 插件名称，应与文件夹名称一致，用于设置存储
+const extensionName = "remove-br-tags-extension";
+const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`; // 确保路径正确
 
-// 插件名称 (与文件夹名一致)
-const extensionName = 'remove-br-tags-extension';
-// 插件文件夹路径 (相对于 SillyTavern 的 public 目录)
-const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-
-// 默认设置
+// 插件的默认设置
 const defaultSettings = {
-    hideChatBr: false,
-    hideAllBr: false,
+    hideBrInChat: false,    // 是否隐藏聊天消息中的 <br>
+    hideBrGlobal: false,    // 是否隐藏全局的 <br>
 };
 
-// CSS 类名
-const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
-const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
+// 用于动态添加/移除CSS规则的 <style> 标签的ID
+const STYLE_TAG_ID = "br-visibility-dynamic-styles";
 
-
-// 加载或初始化插件设置
-// (这个函数名和逻辑模仿官方范例的 loadSettings)
-function loadPluginSettings() {
-    // 如果此插件的设置对象在全局 extension_settings 中不存在，则创建它
+/**
+ * 获取或初始化插件设置
+ * @returns {object} 插件的当前设置
+ */
+function getPluginSettings() {
+    // 如果设置对象不存在，则初始化
     if (!extension_settings[extensionName]) {
-        console.log(`[${extensionName}] Settings not found, creating with defaults.`);
-        extension_settings[extensionName] = {};
+        extension_settings[extensionName] = { ...defaultSettings };
     }
-
-    // 如果设置对象是空的 (例如首次加载)，则用默认值填充
-    // 或者，更稳妥的是，确保所有默认键都存在
-    let settingsChanged = false;
+    // 确保所有默认键都存在 (用于插件更新后添加新设置项)
     for (const key in defaultSettings) {
-        if (typeof extension_settings[extensionName][key] === 'undefined') {
+        if (extension_settings[extensionName][key] === undefined) {
             extension_settings[extensionName][key] = defaultSettings[key];
-            settingsChanged = true;
         }
     }
-    if(settingsChanged){
-        console.log(`[${extensionName}] Initialized some default settings.`);
-        // 如果有设置被初始化为默认值，可以考虑保存一次，但通常由用户首次交互触发保存
-        // saveSettingsDebounced(); // 首次加载时通常不需要主动保存，除非有强制的初始值
-    }
-
-
-    // 获取当前设置，用于更新UI (如果UI已加载)
-    const currentSettings = extension_settings[extensionName];
-
-    // 更新UI复选框的状态
-    // 确保这些ID与 settings_display.html 中的ID一致
-    const $chatToggle = $("#br_ext_hide_chat_br_toggle");
-    const $allToggle = $("#br_ext_hide_all_br_toggle");
-
-    if ($chatToggle.length) {
-        $chatToggle.prop("checked", currentSettings.hideChatBr);
-    }
-    if ($allToggle.length) {
-        $allToggle.prop("checked", currentSettings.hideAllBr);
-    }
-    // 官方范例中有一个 .trigger("input")，如果你的复选框有其他监听 input 事件的逻辑，可以加上
-    // 但对于简单的状态设置，通常不需要。
-
-    // 初始应用样式
-    applyBrVisibilityStyle();
+    return extension_settings[extensionName];
 }
 
-// 当“隐藏聊天BR”复选框状态改变时调用
-function onChatBrToggleChange(event) {
-    const value = Boolean($(event.target).prop("checked"));
-    extension_settings[extensionName].hideChatBr = value;
-    saveSettingsDebounced(); // 保存设置
-    applyBrVisibilityStyle(); // 立即应用样式
-    // console.log(`[${extensionName}] hideChatBr set to: ${value}`);
-}
+/**
+ * 应用当前的 <br> 标签显示/隐藏设置
+ * 这将通过动态创建或更新一个 <style> 标签来实现
+ */
+function applyBrVisibility() {
+    const settings = getPluginSettings();
+    let cssRules = "";
 
-// 当“隐藏所有BR”复选框状态改变时调用
-function onAllBrToggleChange(event) {
-    const value = Boolean($(event.target).prop("checked"));
-    extension_settings[extensionName].hideAllBr = value;
-    saveSettingsDebounced(); // 保存设置
-    applyBrVisibilityStyle(); // 立即应用样式
-    // console.log(`[${extensionName}] hideAllBr set to: ${value}`);
-}
-
-// 应用BR显隐的CSS样式
-function applyBrVisibilityStyle() {
-    const settings = extension_settings[extensionName] || defaultSettings; // 获取当前设置或默认值
-    const $body = $('body');
-
-    if (settings.hideAllBr) {
-        $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
-    } else {
-        $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
-        if (settings.hideChatBr) {
-            $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
-        } else {
-            $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
-        }
-    }
-}
-
-
-// 插件主入口 (DOM ready后执行)
-jQuery(async ($) => { // 传入 jQuery 作为 $
-    console.log(`[${extensionName}] Document ready. Loading extension HTML and attaching events.`);
-
-    try {
-        // 异步加载 settings_display.html 文件内容
-        // 路径是相对于 SillyTavern 的 public 目录
-        const settingsHtmlPath = `${extensionFolderPath}/settings_display.html`;
-        console.log(`[${extensionName}] Attempting to load HTML from: ${settingsHtmlPath}`);
-        const settingsHtmlString = await $.get(settingsHtmlPath);
-
-        if (settingsHtmlString && typeof settingsHtmlString === 'string') {
-            const $settingsContainer = $('#extensions_settings'); // SillyTavern 中扩展设置的总容器
-            if ($settingsContainer.length) {
-                // 为本插件创建一个唯一的包装器，避免ID冲突，方便管理
-                const $pluginSettingsWrapper = $(`<div id="${extensionName}-settings-wrapper" class="extension-settings-tab-content"></div>`);
-                $pluginSettingsWrapper.html(settingsHtmlString);
-                $settingsContainer.append($pluginSettingsWrapper);
-                console.log(`[${extensionName}] Settings UI injected into #extensions_settings.`);
-
-                // HTML注入后，为其中的元素绑定事件处理器
-                // 确保ID与 settings_display.html 中的ID一致
-                $("#br_ext_hide_chat_br_toggle").on("change", onChatBrToggleChange); // 用 "change" 事件更适合复选框
-                $("#br_ext_hide_all_br_toggle").on("change", onAllBrToggleChange);
-
-                // 加载初始设置到UI并应用样式
-                loadPluginSettings();
-
-            } else {
-                console.error(`[${extensionName}] Target container #extensions_settings not found.`);
+    // 规则1: 控制聊天消息中的 <br>
+    // SillyTavern的聊天消息文本通常在 class="mes_text" 的元素内
+    if (settings.hideBrInChat) {
+        cssRules += `
+            .mes_text br {
+                display: none !important;
             }
-        } else {
-            console.error(`[${extensionName}] Loaded HTML from ${settingsHtmlPath} is empty or not a string.`);
-        }
-    } catch (error) {
-        console.error(`[${extensionName}] Failed to load or inject settings_display.html:`, error);
-        // 可以在 #extensions_settings 中显示一个错误信息
-        $('#extensions_settings').append(`<div style="color:red; padding:10px;">Error loading settings for ${extensionName}: ${error.message || 'Unknown error'}. Check console and network tab.</div>`);
+        `;
+    } else {
+        // 如果不隐藏，确保它们是默认的显示方式 (通常是 block 或 inline)
+        // 'revert' 会尝试恢复到浏览器或父级CSS定义的样式
+        cssRules += `
+            .mes_text br {
+                display: revert !important;
+            }
+        `;
     }
 
-    // 监听SillyTavern全局设置更新事件 (如果其他地方修改了设置，也需要同步)
-    eventSource.on(event_types.SETTINGS_UPDATED, function() {
-        // console.log(`[${extensionName}] Global SETTINGS_UPDATED event received.`);
-        // 重新加载设置到UI并应用样式，以防万一其他方式修改了此插件的设置
-        loadPluginSettings();
-    });
+    // 规则2: 控制全局的 <br>
+    // 这是一个比较激进的选项，需要用户注意
+    if (settings.hideBrGlobal) {
+        // 尝试隐藏body下的所有br，但排除一些已知可能需要br的UI区域（如果能确定的话）
+        // 为简单起见，这里直接针对 body br，并通过UI警告用户
+        cssRules += `
+            body br {
+                display: none !important;
+            }
+            /* 如果希望某些特定UI的br不受影响，可以添加排除规则，例如：
+            #some-critical-ui-element br {
+                display: revert !important;
+            }
+            */
+        `;
+    } else {
+         cssRules += `
+            body br {
+                display: revert !important;
+            }
+        `;
+    }
 
-    // 初始应用一次样式 (以防UI加载前就需要)
-    // loadPluginSettings() 内部会调用 applyBrVisibilityStyle()，所以这里可能重复，但无害
-    applyBrVisibilityStyle();
+    // 获取或创建 <style> 标签
+    let styleTag = document.getElementById(STYLE_TAG_ID);
+    if (!styleTag) {
+        styleTag = document.createElement('style');
+        styleTag.id = STYLE_TAG_ID;
+        styleTag.type = 'text/css';
+        document.head.appendChild(styleTag);
+    }
 
-    console.log(`[${extensionName}] Plugin initialized.`);
+    // 更新 <style> 标签的内容
+    styleTag.textContent = cssRules;
+    // console.log(`${extensionName}: Applied BR visibility rules. Chat BR hidden: ${settings.hideBrInChat}, Global BR hidden: ${settings.hideBrGlobal}`);
+}
+
+
+/**
+ * 当 "隐藏聊天消息中的 <br>" 复选框状态改变时调用
+ * @param {Event} event - 输入事件对象
+ */
+function onChatBrToggle(event) {
+    const settings = getPluginSettings();
+    settings.hideBrInChat = Boolean(event.target.checked);
+    saveSettingsDebounced(); // 保存设置
+    applyBrVisibility();     // 应用更改
+    // console.log(`${extensionName}: Chat BR setting changed to ${settings.hideBrInChat}`);
+}
+
+/**
+ * 当 "隐藏整个界面中的 <br>" 复选框状态改变时调用
+ * @param {Event} event - 输入事件对象
+ */
+function onGlobalBrToggle(event) {
+    const settings = getPluginSettings();
+    settings.hideBrGlobal = Boolean(event.target.checked);
+    saveSettingsDebounced(); // 保存设置
+    applyBrVisibility();     // 应用更改
+    // console.log(`${extensionName}: Global BR setting changed to ${settings.hideBrGlobal}`);
+
+    if (settings.hideBrGlobal) {
+        toastr.warning(
+            "全局隐藏 <br> 标签已启用。如果界面显示异常，请禁用此选项。",
+            "BR标签控制警告",
+            { timeOut: 7000 }
+        );
+    }
+}
+
+/**
+ * 加载插件设置并更新UI元素的状态
+ */
+async function loadSettings() {
+    await loadExtensionSettings(extensionName, defaultSettings); // SillyTavern的加载函数
+    const settings = getPluginSettings();
+
+    // 更新复选框的状态
+    const chatCheckbox = document.getElementById('st-br-control-chat');
+    if (chatCheckbox) {
+        chatCheckbox.checked = settings.hideBrInChat;
+    }
+
+    const globalCheckbox = document.getElementById('st-br-control-global');
+    if (globalCheckbox) {
+        globalCheckbox.checked = settings.hideBrGlobal;
+    }
+
+    // 首次加载时应用CSS规则
+    applyBrVisibility();
+    // console.log(`${extensionName}: Settings loaded. Chat BR hidden: ${settings.hideBrInChat}, Global BR hidden: ${settings.hideBrGlobal}`);
+}
+
+// 当SillyTavern加载此插件时执行 (jQuery的ready类似功能)
+jQuery(async () => {
+    // 加载设置界面的HTML
+    // 注意路径是相对于 SillyTavern 的根目录下的 extensions 文件夹
+    const settingsHtml = await $.get(`${extensionFolderPath}/settings.html`);
+
+    // 将HTML添加到SillyTavern的扩展设置区域
+    // $("#extensions_settings") 是左侧栏，$("#extensions_settings2") 是右侧栏
+    // 根据插件功能偏向，选择一个。这里我们放到主设置区域。
+    $("#extensions_settings").append(settingsHtml);
+
+    // 绑定事件监听器到复选框
+    // 使用事件委托，确保在DOM更新后依然有效，或者直接绑定（如果HTML是静态插入的）
+    $(document).on('input', '#st-br-control-chat', onChatBrToggle);
+    $(document).on('input', '#st-br-control-global', onGlobalBrToggle);
+
+    // 加载并应用初始设置
+    await loadSettings();
+
+    console.log(`${extensionName} extension loaded successfully.`);
 });
