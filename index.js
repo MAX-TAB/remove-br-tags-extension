@@ -1,146 +1,164 @@
 // SillyTavern/public/scripts/extensions/third-party/remove-br-tags-extension/index.js
 'use strict';
 
-// 从核心脚本导入 (路径相对于 public/scripts/extensions/third-party/remove-br-tags-extension/index.js)
-import {
-    eventSource,
-    event_types,
-    // messageFormatting, // 不需要
-    // chat, // 不需要
-} from '../../../script.js'; // 向上三级到 public/scripts/script.js
-
 // 从扩展助手脚本导入 (路径相对于当前文件)
 import {
-    // getContext, // 如果确实需要 context 的其他部分
-    renderExtensionTemplateAsync,
-    extension_settings, // SillyTavern 用于存储所有扩展设置的对象
-    // saveMetadataDebounced // settings_display.html 中的脚本会通过 SillyTavern.saveSettingsDebounced 调用
+    extension_settings,
+    // getContext, // 范例中没有在顶层使用 getContext 来获取设置，而是直接用 extension_settings
+    // loadExtensionSettings, // 范例中是自己写的 loadSettings 函数
 } from '../../extensions.js'; // 向上两级到 public/scripts/extensions/extensions.js
 
-// 定义插件文件夹名称 (必须与实际文件夹名称完全一致)
-const pluginName = 'remove-br-tags-extension';
+// 从主脚本导入 (路径相对于当前文件)
+import { saveSettingsDebounced } from '../../../script.js'; // 向上三级到 public/scripts/script.js
 
-// 初始化此插件的设置对象 (如果尚不存在)
-// jQuery(async () => {}) 内部也会做一次检查和初始化
-if (typeof extension_settings !== 'undefined' && !extension_settings[pluginName]) {
-    extension_settings[pluginName] = {
-        hideChatBr: false,
-        hideAllBr: false,
-    };
+// 插件名称 (与文件夹名一致)
+const extensionName = 'remove-br-tags-extension';
+// 插件文件夹路径 (相对于 SillyTavern 的 public 目录)
+const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
+
+// 默认设置
+const defaultSettings = {
+    hideChatBr: false,
+    hideAllBr: false,
+};
+
+// CSS 类名
+const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
+const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
+
+
+// 加载或初始化插件设置
+// (这个函数名和逻辑模仿官方范例的 loadSettings)
+function loadPluginSettings() {
+    // 如果此插件的设置对象在全局 extension_settings 中不存在，则创建它
+    if (!extension_settings[extensionName]) {
+        console.log(`[${extensionName}] Settings not found, creating with defaults.`);
+        extension_settings[extensionName] = {};
+    }
+
+    // 如果设置对象是空的 (例如首次加载)，则用默认值填充
+    // 或者，更稳妥的是，确保所有默认键都存在
+    let settingsChanged = false;
+    for (const key in defaultSettings) {
+        if (typeof extension_settings[extensionName][key] === 'undefined') {
+            extension_settings[extensionName][key] = defaultSettings[key];
+            settingsChanged = true;
+        }
+    }
+    if(settingsChanged){
+        console.log(`[${extensionName}] Initialized some default settings.`);
+        // 如果有设置被初始化为默认值，可以考虑保存一次，但通常由用户首次交互触发保存
+        // saveSettingsDebounced(); // 首次加载时通常不需要主动保存，除非有强制的初始值
+    }
+
+
+    // 获取当前设置，用于更新UI (如果UI已加载)
+    const currentSettings = extension_settings[extensionName];
+
+    // 更新UI复选框的状态
+    // 确保这些ID与 settings_display.html 中的ID一致
+    const $chatToggle = $("#br_ext_hide_chat_br_toggle");
+    const $allToggle = $("#br_ext_hide_all_br_toggle");
+
+    if ($chatToggle.length) {
+        $chatToggle.prop("checked", currentSettings.hideChatBr);
+    }
+    if ($allToggle.length) {
+        $allToggle.prop("checked", currentSettings.hideAllBr);
+    }
+    // 官方范例中有一个 .trigger("input")，如果你的复选框有其他监听 input 事件的逻辑，可以加上
+    // 但对于简单的状态设置，通常不需要。
+
+    // 初始应用样式
+    applyBrVisibilityStyle();
 }
 
-// 使用jQuery的DOM ready事件作为主入口点
+// 当“隐藏聊天BR”复选框状态改变时调用
+function onChatBrToggleChange(event) {
+    const value = Boolean($(event.target).prop("checked"));
+    extension_settings[extensionName].hideChatBr = value;
+    saveSettingsDebounced(); // 保存设置
+    applyBrVisibilityStyle(); // 立即应用样式
+    // console.log(`[${extensionName}] hideChatBr set to: ${value}`);
+}
+
+// 当“隐藏所有BR”复选框状态改变时调用
+function onAllBrToggleChange(event) {
+    const value = Boolean($(event.target).prop("checked"));
+    extension_settings[extensionName].hideAllBr = value;
+    saveSettingsDebounced(); // 保存设置
+    applyBrVisibilityStyle(); // 立即应用样式
+    // console.log(`[${extensionName}] hideAllBr set to: ${value}`);
+}
+
+// 应用BR显隐的CSS样式
+function applyBrVisibilityStyle() {
+    const settings = extension_settings[extensionName] || defaultSettings; // 获取当前设置或默认值
+    const $body = $('body');
+
+    if (settings.hideAllBr) {
+        $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
+    } else {
+        $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
+        if (settings.hideChatBr) {
+            $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
+        } else {
+            $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
+        }
+    }
+}
+
+
+// 插件主入口 (DOM ready后执行)
 jQuery(async ($) => { // 传入 jQuery 作为 $
-    console.log(`[${pluginName}] Initializing plugin... (DOM ready)`);
+    console.log(`[${extensionName}] Document ready. Loading extension HTML and attaching events.`);
 
-    // --- 插件核心逻辑变量 ---
-    const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
-    const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
-
-    // --- getPluginSettings: 从共享的 extension_settings 对象中获取本插件的设置 ---
-    function getPluginSettings() {
-        // 确保 extension_settings 已被正确导入并可用
-        if (typeof extension_settings === 'undefined') {
-            console.error(`[${pluginName}] extension_settings is undefined. Cannot get settings.`);
-            return { hideChatBr: false, hideAllBr: false }; // 返回默认以避免崩溃
-        }
-        const defaultSettings = {
-            hideChatBr: false,
-            hideAllBr: false,
-        };
-        if (!extension_settings[pluginName]) {
-            console.log(`[${pluginName}] Initializing settings for ${pluginName} in extension_settings.`);
-            extension_settings[pluginName] = { ...defaultSettings };
-        } else {
-            for (const key in defaultSettings) {
-                if (typeof extension_settings[pluginName][key] === 'undefined') {
-                    extension_settings[pluginName][key] = defaultSettings[key];
-                }
-            }
-        }
-        return extension_settings[pluginName];
-    }
-
-    // --- applyBrVisibilityStyle: 根据设置切换body上的CSS类 ---
-    function applyBrVisibilityStyle() {
-        const settings = getPluginSettings();
-        const $body = $('body'); // 缓存jQuery对象
-
-        if (settings.hideAllBr) {
-            $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
-        } else {
-            $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
-            if (settings.hideChatBr) {
-                $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
-            } else {
-                $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
-            }
-        }
-    }
-
-    // --- 将 applyBrVisibilityStyle 函数暴露给 settings_display.html ---
-    if (!window.extensions) {
-        window.extensions = {};
-    }
-    if (!window.extensions[pluginName]) {
-        window.extensions[pluginName] = {};
-    }
-    window.extensions[pluginName].applyVisibility = function (currentSettings) {
-        const $body = $('body');
-        if (currentSettings.hideAllBr) {
-            $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
-        } else {
-            $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
-            if (currentSettings.hideChatBr) {
-                $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
-            } else {
-                $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
-            }
-        }
-    };
-
-    // --- 加载并注入 settings_display.html ---
     try {
-        if (typeof renderExtensionTemplateAsync !== 'function') {
-            console.error(`[${pluginName}] renderExtensionTemplateAsync is not available (type: ${typeof renderExtensionTemplateAsync}). Cannot load settings UI.`);
-            throw new Error('renderExtensionTemplateAsync not available');
-        }
-
-        console.log(`[${pluginName}] Attempting to load settings UI template 'settings_display' for 'third-party/${pluginName}'...`);
-        const settingsHtmlString = await renderExtensionTemplateAsync(`third-party/${pluginName}`, 'settings_display');
+        // 异步加载 settings_display.html 文件内容
+        // 路径是相对于 SillyTavern 的 public 目录
+        const settingsHtmlPath = `${extensionFolderPath}/settings_display.html`;
+        console.log(`[${extensionName}] Attempting to load HTML from: ${settingsHtmlPath}`);
+        const settingsHtmlString = await $.get(settingsHtmlPath);
 
         if (settingsHtmlString && typeof settingsHtmlString === 'string') {
-            const $settingsContainer = $('#extensions_settings');
+            const $settingsContainer = $('#extensions_settings'); // SillyTavern 中扩展设置的总容器
             if ($settingsContainer.length) {
-                // 移除旧的实例（如果因重复加载等原因存在）
-                $settingsContainer.find(`.extension-settings-container[data-extension="${pluginName}"]`).remove();
-                // 创建特定于此扩展的包装器
-                const $extensionSpecificContainer = $(`<div class="extension-settings-container" data-extension="${pluginName}"></div>`);
-                $extensionSpecificContainer.html(settingsHtmlString);
-                $settingsContainer.append($extensionSpecificContainer);
-                console.log(`[${pluginName}] Settings UI for '${pluginName}' injected into #extensions_settings.`);
+                // 为本插件创建一个唯一的包装器，避免ID冲突，方便管理
+                const $pluginSettingsWrapper = $(`<div id="${extensionName}-settings-wrapper" class="extension-settings-tab-content"></div>`);
+                $pluginSettingsWrapper.html(settingsHtmlString);
+                $settingsContainer.append($pluginSettingsWrapper);
+                console.log(`[${extensionName}] Settings UI injected into #extensions_settings.`);
+
+                // HTML注入后，为其中的元素绑定事件处理器
+                // 确保ID与 settings_display.html 中的ID一致
+                $("#br_ext_hide_chat_br_toggle").on("change", onChatBrToggleChange); // 用 "change" 事件更适合复选框
+                $("#br_ext_hide_all_br_toggle").on("change", onAllBrToggleChange);
+
+                // 加载初始设置到UI并应用样式
+                loadPluginSettings();
+
             } else {
-                console.error(`[${pluginName}] Target container #extensions_settings not found in the DOM.`);
+                console.error(`[${extensionName}] Target container #extensions_settings not found.`);
             }
         } else {
-            console.error(`[${pluginName}] Loaded settings HTML for 'settings_display' is empty or not a string.`);
+            console.error(`[${extensionName}] Loaded HTML from ${settingsHtmlPath} is empty or not a string.`);
         }
     } catch (error) {
-        console.error(`[${pluginName}] Failed to load or inject settings_display.html:`, error);
-        const $settingsContainer = $('#extensions_settings');
-         if ($settingsContainer.length) {
-             $settingsContainer.append(`<div style="color: red; padding: 10px; border: 1px solid red;">Error loading settings UI for ${pluginName}: ${error.message || 'Unknown error'}. Check console.</div>`);
-         }
+        console.error(`[${extensionName}] Failed to load or inject settings_display.html:`, error);
+        // 可以在 #extensions_settings 中显示一个错误信息
+        $('#extensions_settings').append(`<div style="color:red; padding:10px;">Error loading settings for ${extensionName}: ${error.message || 'Unknown error'}. Check console and network tab.</div>`);
     }
 
-    // --- 事件监听 ---
-    eventSource.on(event_types.SETTINGS_UPDATED, function () {
-        // console.log(`[${pluginName}] Event: SETTINGS_UPDATED received.`);
-        applyBrVisibilityStyle(); // 当设置更新时，重新应用样式
+    // 监听SillyTavern全局设置更新事件 (如果其他地方修改了设置，也需要同步)
+    eventSource.on(event_types.SETTINGS_UPDATED, function() {
+        // console.log(`[${extensionName}] Global SETTINGS_UPDATED event received.`);
+        // 重新加载设置到UI并应用样式，以防万一其他方式修改了此插件的设置
+        loadPluginSettings();
     });
 
-    // --- 初始应用 ---
+    // 初始应用一次样式 (以防UI加载前就需要)
+    // loadPluginSettings() 内部会调用 applyBrVisibilityStyle()，所以这里可能重复，但无害
     applyBrVisibilityStyle();
 
-    console.log(`[${pluginName}] BR Tags Visibility plugin initialized and settings UI injection attempted.`);
+    console.log(`[${extensionName}] Plugin initialized.`);
 });
