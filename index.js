@@ -1,170 +1,146 @@
 // SillyTavern/public/scripts/extensions/third-party/remove-br-tags-extension/index.js
 'use strict';
 
-// --- 更新导入路径 ---
+// 从核心脚本导入 (路径相对于 public/scripts/extensions/third-party/remove-br-tags-extension/index.js)
 import {
     eventSource,
     event_types,
-} from '../../../script.js'; // 路径更新：向上三级到 public/scripts/script.js
+    // messageFormatting, // 不需要
+    // chat, // 不需要
+} from '../../../script.js'; // 向上三级到 public/scripts/script.js
 
-let renderExtensionTemplateAsync_imported, extension_settings_imported;
-try {
-    // 路径更新：向上两级到 public/scripts/extensions/extensions.js (假设文件名为 extensions.js)
-    const extensionsModule = await import('../../extensions.js');
-    renderExtensionTemplateAsync_imported = extensionsModule.renderExtensionTemplateAsync;
-    extension_settings_imported = extensionsModule.extension_settings;
-    console.log(`[remove-br-tags-extension] Successfully imported from '../../extensions.js':`, { // 日志中的路径也更新
-        renderExtensionTemplateAsync_type: typeof renderExtensionTemplateAsync_imported,
-        extension_settings_type: typeof extension_settings_imported
-    });
-} catch (importError) {
-    console.error(`[remove-br-tags-extension] Failed to import from '../../extensions.js':`, importError); // 日志中的路径也更新
-}
-// --- 导入路径更新结束 ---
+// 从扩展助手脚本导入 (路径相对于当前文件)
+import {
+    // getContext, // 如果确实需要 context 的其他部分
+    renderExtensionTemplateAsync,
+    extension_settings, // SillyTavern 用于存储所有扩展设置的对象
+    // saveMetadataDebounced // settings_display.html 中的脚本会通过 SillyTavern.saveSettingsDebounced 调用
+} from '../../extensions.js'; // 向上两级到 public/scripts/extensions/extensions.js
 
-
+// 定义插件文件夹名称 (必须与实际文件夹名称完全一致)
 const pluginName = 'remove-br-tags-extension';
 
-if (extension_settings_imported && !extension_settings_imported[pluginName]) {
-    extension_settings_imported[pluginName] = {
+// 初始化此插件的设置对象 (如果尚不存在)
+// jQuery(async () => {}) 内部也会做一次检查和初始化
+if (typeof extension_settings !== 'undefined' && !extension_settings[pluginName]) {
+    extension_settings[pluginName] = {
         hideChatBr: false,
-        hideAllBr: false
+        hideAllBr: false,
     };
 }
 
-(function ($) {
-    async function initializePlugin() {
-        console.log(`[${pluginName}] DOM ready. initializePlugin called.`);
+// 使用jQuery的DOM ready事件作为主入口点
+jQuery(async ($) => { // 传入 jQuery 作为 $
+    console.log(`[${pluginName}] Initializing plugin... (DOM ready)`);
 
-        if (typeof $ !== 'function') {
-            console.error(`[${pluginName}] jQuery ($) is not available even after DOM ready. Aborting.`);
-            return;
+    // --- 插件核心逻辑变量 ---
+    const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
+    const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
+
+    // --- getPluginSettings: 从共享的 extension_settings 对象中获取本插件的设置 ---
+    function getPluginSettings() {
+        // 确保 extension_settings 已被正确导入并可用
+        if (typeof extension_settings === 'undefined') {
+            console.error(`[${pluginName}] extension_settings is undefined. Cannot get settings.`);
+            return { hideChatBr: false, hideAllBr: false }; // 返回默认以避免崩溃
         }
-
-        const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
-        const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
-
-        function getPluginSettingsFromSharedState() {
-            if (!extension_settings_imported) {
-                console.warn(`[${pluginName}] extension_settings_imported is not available. Using fallback settings.`);
-                return { hideChatBr: false, hideAllBr: false };
-            }
-            const defaultSettings = { hideChatBr: false, hideAllBr: false };
-            if (!extension_settings_imported[pluginName]) {
-                extension_settings_imported[pluginName] = { ...defaultSettings };
-            } else {
-                 for (const key in defaultSettings) {
-                    if (typeof extension_settings_imported[pluginName][key] === 'undefined') {
-                        extension_settings_imported[pluginName][key] = defaultSettings[key];
-                    }
-                }
-            }
-            return extension_settings_imported[pluginName];
-        }
-
-        function applyBrVisibilityStyle() {
-            const settings = getPluginSettingsFromSharedState();
-            const body = $('body');
-            if (settings.hideAllBr) {
-                body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
-            } else {
-                body.removeClass(CSS_CLASS_HIDE_ALL_BR);
-                if (settings.hideChatBr) {
-                    body.addClass(CSS_CLASS_HIDE_CHAT_BR);
-                } else {
-                    body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
-                }
-            }
-        }
-
-        if (!window.extensions) window.extensions = {};
-        if (!window.extensions[pluginName]) window.extensions[pluginName] = {};
-        window.extensions[pluginName].applyVisibility = function(currentSettings) {
-            const body = $('body');
-            if (currentSettings.hideAllBr) {
-                body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
-            } else {
-                body.removeClass(CSS_CLASS_HIDE_ALL_BR);
-                if (currentSettings.hideChatBr) {
-                    body.addClass(CSS_CLASS_HIDE_CHAT_BR);
-                } else {
-                    body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
-                }
-            }
+        const defaultSettings = {
+            hideChatBr: false,
+            hideAllBr: false,
         };
-
-        let initializeAttempts = 0;
-        const maxInitializeAttempts = 30;
-        const attemptInterval = 500;
-
-        async function attemptLoadSettingsUI() {
-            initializeAttempts++;
-            const conditions = {
-                renderFuncAvailable: typeof renderExtensionTemplateAsync_imported === 'function',
-                settingsContainerExists: $('#extensions_settings').length > 0,
-            };
-
-            if (conditions.renderFuncAvailable && conditions.settingsContainerExists) {
-                console.log(`[${pluginName}] Core dependencies met after ${initializeAttempts} attempts. Proceeding to load settings UI.`);
-                try {
-                    // 路径参数 "third-party/${pluginName}" 保持不变，
-                    // 因为 renderExtensionTemplateAsync 内部会根据这个格式来解析。
-                    // SillyTavern 应该能处理 "third-party/remove-br-tags-extension"
-                    // 并找到位于 public/scripts/extensions/third-party/remove-br-tags-extension/settings_display.html 的文件。
-                    console.log(`[${pluginName}] Attempting to load settings UI template 'settings_display' for 'third-party/${pluginName}'...`);
-                    const settingsHtmlString = await renderExtensionTemplateAsync_imported(`third-party/${pluginName}`, 'settings_display');
-
-                    if (settingsHtmlString && typeof settingsHtmlString === 'string') {
-                        const settingsContainer = $('#extensions_settings');
-                        const $extensionSpecificContainer = $(`<div class="extension-settings-container" data-extension="${pluginName}"></div>`);
-                        $extensionSpecificContainer.html(settingsHtmlString);
-                        settingsContainer.append($extensionSpecificContainer);
-                        console.log(`[${pluginName}] Settings UI for '${pluginName}' injected into #extensions_settings.`);
-
-                        eventSource.on(event_types.SETTINGS_UPDATED, applyBrVisibilityStyle);
-                        applyBrVisibilityStyle();
-                        console.log(`[${pluginName}] BR Tags Visibility plugin fully initialized.`);
-
-                    } else {
-                        console.error(`[${pluginName}] Loaded settings HTML for 'settings_display' is empty or not a string.`);
-                    }
-                } catch (error) {
-                    console.error(`[${pluginName}] Critical error - Failed to load or inject settings_display.html:`, error);
-                    const settingsContainer = $('#extensions_settings');
-                    if (settingsContainer.length) {
-                         settingsContainer.append(`<div style="color: red; padding: 10px; border: 1px solid red;">Error loading settings UI for ${pluginName}: ${error.message || 'Unknown error'}. Check console.</div>`);
-                    }
-                }
-            } else if (initializeAttempts < maxInitializeAttempts) {
-                let missingConditions = [];
-                if (!conditions.renderFuncAvailable) missingConditions.push("renderExtensionTemplateAsync_imported is not a function (type: " + typeof renderExtensionTemplateAsync_imported + ")");
-                if (!conditions.settingsContainerExists) missingConditions.push("#extensions_settings container not found");
-
-                console.warn(`[${pluginName}] Waiting for core dependencies... Attempt ${initializeAttempts}/${maxInitializeAttempts}. Missing: ${missingConditions.join(', ')}`);
-                setTimeout(attemptLoadSettingsUI, attemptInterval);
-            } else {
-                let finalMissing = [];
-                if (typeof renderExtensionTemplateAsync_imported !== 'function') finalMissing.push("renderExtensionTemplateAsync_imported (type: " + typeof renderExtensionTemplateAsync_imported + ")");
-                if (!$('#extensions_settings').length) finalMissing.push("#extensions_settings container");
-
-                console.error(`[${pluginName}] Failed to initialize after ${maxInitializeAttempts} attempts. Missing dependencies: ${finalMissing.join('; ')}.`);
-                const settingsContainer = $('#extensions_settings');
-                if (settingsContainer.length) {
-                     settingsContainer.append(`<div style="color: red; padding: 10px; border: 1px solid red;">${pluginName}: Failed to load settings UI. Dependencies not met. Check console.</div>`);
+        if (!extension_settings[pluginName]) {
+            console.log(`[${pluginName}] Initializing settings for ${pluginName} in extension_settings.`);
+            extension_settings[pluginName] = { ...defaultSettings };
+        } else {
+            for (const key in defaultSettings) {
+                if (typeof extension_settings[pluginName][key] === 'undefined') {
+                    extension_settings[pluginName][key] = defaultSettings[key];
                 }
             }
         }
-
-        await attemptLoadSettingsUI();
-
+        return extension_settings[pluginName];
     }
 
-    $(document).ready(function() {
-        if (typeof jQuery === 'undefined' && typeof $ === 'undefined') {
-            console.error(`[${pluginName}] jQuery is not defined when document.ready fires. Plugin cannot initialize.`);
-            return;
+    // --- applyBrVisibilityStyle: 根据设置切换body上的CSS类 ---
+    function applyBrVisibilityStyle() {
+        const settings = getPluginSettings();
+        const $body = $('body'); // 缓存jQuery对象
+
+        if (settings.hideAllBr) {
+            $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
+        } else {
+            $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
+            if (settings.hideChatBr) {
+                $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
+            } else {
+                $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
+            }
         }
-        initializePlugin();
+    }
+
+    // --- 将 applyBrVisibilityStyle 函数暴露给 settings_display.html ---
+    if (!window.extensions) {
+        window.extensions = {};
+    }
+    if (!window.extensions[pluginName]) {
+        window.extensions[pluginName] = {};
+    }
+    window.extensions[pluginName].applyVisibility = function (currentSettings) {
+        const $body = $('body');
+        if (currentSettings.hideAllBr) {
+            $body.addClass(CSS_CLASS_HIDE_ALL_BR).removeClass(CSS_CLASS_HIDE_CHAT_BR);
+        } else {
+            $body.removeClass(CSS_CLASS_HIDE_ALL_BR);
+            if (currentSettings.hideChatBr) {
+                $body.addClass(CSS_CLASS_HIDE_CHAT_BR);
+            } else {
+                $body.removeClass(CSS_CLASS_HIDE_CHAT_BR);
+            }
+        }
+    };
+
+    // --- 加载并注入 settings_display.html ---
+    try {
+        if (typeof renderExtensionTemplateAsync !== 'function') {
+            console.error(`[${pluginName}] renderExtensionTemplateAsync is not available (type: ${typeof renderExtensionTemplateAsync}). Cannot load settings UI.`);
+            throw new Error('renderExtensionTemplateAsync not available');
+        }
+
+        console.log(`[${pluginName}] Attempting to load settings UI template 'settings_display' for 'third-party/${pluginName}'...`);
+        const settingsHtmlString = await renderExtensionTemplateAsync(`third-party/${pluginName}`, 'settings_display');
+
+        if (settingsHtmlString && typeof settingsHtmlString === 'string') {
+            const $settingsContainer = $('#extensions_settings');
+            if ($settingsContainer.length) {
+                // 移除旧的实例（如果因重复加载等原因存在）
+                $settingsContainer.find(`.extension-settings-container[data-extension="${pluginName}"]`).remove();
+                // 创建特定于此扩展的包装器
+                const $extensionSpecificContainer = $(`<div class="extension-settings-container" data-extension="${pluginName}"></div>`);
+                $extensionSpecificContainer.html(settingsHtmlString);
+                $settingsContainer.append($extensionSpecificContainer);
+                console.log(`[${pluginName}] Settings UI for '${pluginName}' injected into #extensions_settings.`);
+            } else {
+                console.error(`[${pluginName}] Target container #extensions_settings not found in the DOM.`);
+            }
+        } else {
+            console.error(`[${pluginName}] Loaded settings HTML for 'settings_display' is empty or not a string.`);
+        }
+    } catch (error) {
+        console.error(`[${pluginName}] Failed to load or inject settings_display.html:`, error);
+        const $settingsContainer = $('#extensions_settings');
+         if ($settingsContainer.length) {
+             $settingsContainer.append(`<div style="color: red; padding: 10px; border: 1px solid red;">Error loading settings UI for ${pluginName}: ${error.message || 'Unknown error'}. Check console.</div>`);
+         }
+    }
+
+    // --- 事件监听 ---
+    eventSource.on(event_types.SETTINGS_UPDATED, function () {
+        // console.log(`[${pluginName}] Event: SETTINGS_UPDATED received.`);
+        applyBrVisibilityStyle(); // 当设置更新时，重新应用样式
     });
 
-})(jQuery);
+    // --- 初始应用 ---
+    applyBrVisibilityStyle();
+
+    console.log(`[${pluginName}] BR Tags Visibility plugin initialized and settings UI injection attempted.`);
+});
