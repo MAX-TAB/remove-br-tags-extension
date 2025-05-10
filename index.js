@@ -2,27 +2,29 @@
 'use strict';
 
 import { eventSource, event_types } from '../../../../script.js';
-// 尝试导入SillyTavern核心功能，如果这些函数是全局可用的，则可能不需要显式导入
-// 例如: SillyTavern.context, SillyTavern.renderExtensionTemplateAsync
-// 如果它们不是全局的，你需要找到正确的导入路径或方式。
 
 (function () {
+    // 确保SillyTavern上下文和jQuery在执行前可用
+    if (!window.SillyTavern || !window.SillyTavern.getContext || !window.$) {
+        console.error("BR标签显隐控制: SillyTavern context or jQuery not available.");
+        // 可以在这里设置一个延时重试，或者等待某个SillyTavern加载完成的事件
+        // 但更简单的是确保扩展加载顺序允许这些全局变量存在
+        return;
+    }
+
     const context = SillyTavern.getContext();
     if (!context) {
         console.error("BR标签显隐控制: Failed to get SillyTavern context.");
         return;
     }
-    const { extensionSettings, registerExtensionSettings generazioneHtml, getExtensionSettingsNode } = context;
+    const { extensionSettings } = context;
 
     const MODULE_NAME = 'brTagsVisibilityExtension';
-    const EXTENSION_NAME = 'br-tags-visibility'; // 你的扩展文件夹名
+    const PLUGIN_NAME = 'br-tags-visibility'; // 你的扩展文件夹名
     const CSS_CLASS_HIDE_CHAT_BR = 'ext-hide-chat-br-tags';
     const CSS_CLASS_HIDE_ALL_BR = 'ext-hide-all-br-tags';
 
-    let settingsNode = null; // 用来存放设置UI的DOM节点
-
     function getSettings() {
-        // ... (getSettings函数保持不变)
         const defaultSettings = {
             hideChatBr: false,
             hideAllBr: false
@@ -39,7 +41,6 @@ import { eventSource, event_types } from '../../../../script.js';
     }
 
     function applyBrVisibility() {
-        // ... (applyBrVisibility函数保持不变)
         const settings = getSettings();
         if (settings.hideAllBr) {
             document.body.classList.add(CSS_CLASS_HIDE_ALL_BR);
@@ -54,7 +55,6 @@ import { eventSource, event_types } from '../../../../script.js';
         }
     }
 
-    // 将函数暴露给 settings_display.html (如果settings_display.html中的脚本还在使用它)
     if (!window.extensions) {
         window.extensions = {};
     }
@@ -62,7 +62,6 @@ import { eventSource, event_types } from '../../../../script.js';
         window.extensions.brTagsVisibility = {};
     }
     window.extensions.brTagsVisibility.applyVisibility = function(currentSettings) {
-        // ... (暴露的applyVisibility函数保持不变)
         if (currentSettings.hideAllBr) {
             document.body.classList.add(CSS_CLASS_HIDE_ALL_BR);
             document.body.classList.remove(CSS_CLASS_HIDE_CHAT_BR);
@@ -76,80 +75,89 @@ import { eventSource, event_types } from '../../../../script.js';
         }
     };
 
-    // 这个函数将被SillyTavern调用（或者在某个事件触发时调用）来构建设置UI
-    async function buildSettingsUI() {
-        if (!SillyTavern.renderExtensionTemplateAsync) {
-            console.error(`${EXTENSION_NAME}: SillyTavern.renderExtensionTemplateAsync is not available.`);
-            return null; // 或者返回一个错误提示的HTML
+    // 函数：加载并注入设置UI
+    async function loadAndInjectSettingsUI() {
+        // 确保 renderExtensionTemplateAsync 函数存在
+        if (typeof SillyTavern.renderExtensionTemplateAsync !== 'function') {
+            console.error(`${PLUGIN_NAME}: SillyTavern.renderExtensionTemplateAsync function is not available.`);
+            return;
+        }
+
+        // 确保目标容器存在
+        const settingsContainer = $('#extensions_settings');
+        if (!settingsContainer.length) {
+            console.error(`${PLUGIN_NAME}: Target container #extensions_settings not found.`);
+            // 可能SillyTavern还没有创建这个容器，需要等待或在不同事件钩子中执行
+            return;
         }
 
         try {
-            // SillyTavern的renderExtensionTemplateAsync期望的路径可能是相对于public目录的
-            // 如果你的扩展在 data/user/extensions/ 目录下，路径可能需要调整
-            // 'third-party/' 前缀通常用于 public/scripts/extensions/third-party/ 下的扩展
-            // 对于 data/ 目录下的扩展，路径可能直接是扩展名
-            // 检查SillyTavern文档或工作示例以确定正确路径格式
-            // 假设对于 data/ 目录下的扩展，可以直接用扩展名
-            const templatePath = EXTENSION_NAME; // 或者可能是 `extensions/${EXTENSION_NAME}`
-            const settingsHtml = await SillyTavern.renderExtensionTemplateAsync(templatePath, 'settings_display');
+            console.log(`${PLUGIN_NAME}: Attempting to load settings UI with path 'third-party/${PLUGIN_NAME}'...`);
+            // 严格按照你提供的路径格式
+            const settingsHtmlString = await SillyTavern.renderExtensionTemplateAsync(`third-party/${PLUGIN_NAME}`, 'settings_display');
 
-            // 创建一个 div 来容纳 HTML，并允许 settings_display.html 中的脚本执行
-            const container = document.createElement('div');
-            container.innerHTML = settingsHtml;
+            if (settingsHtmlString && typeof settingsHtmlString === 'string') {
+                console.log(`${PLUGIN_NAME}: Settings HTML loaded successfully (length: ${settingsHtmlString.length}). Appending to #extensions_settings.`);
 
-            // 重新执行 settings_display.html 中内联的 <script> 标签
-            // 注意：这是一种常见但有时复杂的处理方式。SillyTavern自身可能有更优雅的机制。
-            Array.from(container.querySelectorAll("script")).forEach(oldScript => {
-                const newScript = document.createElement("script");
-                Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
-                newScript.appendChild(document.createTextNode(oldScript.innerHTML));
-                oldScript.parentNode.replaceChild(newScript, oldScript);
-            });
+                // 将HTML字符串转换为DOM元素，以便jQuery的.append()能正确处理脚本
+                // (jQuery的 .html() 或 .append() 对于字符串HTML通常会尝试执行脚本，但有时行为不一致)
+                // 或者，更可靠的方式是先创建一个jQuery对象
+                const $settingsHtml = $(settingsHtmlString);
 
-            return container;
+                // 追加到目标容器
+                settingsContainer.append($settingsHtml);
+
+                // 重新执行脚本可能不是必需的，如果jQuery的append正确处理了
+                // 但如果 settings_display.html 中的脚本不执行，可以取消下面的注释
+                /*
+                $settingsHtml.find("script").each(function() {
+                    const oldScript = this;
+                    const newScript = document.createElement("script");
+                    Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+                    newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                    oldScript.parentNode.replaceChild(newScript, oldScript);
+                    console.log(`${PLUGIN_NAME}: Re-executed script from settings_display.html.`);
+                });
+                */
+
+                console.log(`${PLUGIN_NAME}: Settings UI should now be visible in #extensions_settings.`);
+            } else {
+                console.error(`${PLUGIN_NAME}: Loaded settings HTML is empty or not a string.`);
+            }
         } catch (error) {
-            console.error(`${EXTENSION_NAME}: Failed to load or render settings_display.html:`, error);
-            const errorDiv = document.createElement('div');
-            errorDiv.textContent = 'Error loading settings UI for BR Tags Visibility.';
-            errorDiv.style.color = 'red';
-            return errorDiv;
+            console.error(`${PLUGIN_NAME}: Failed to load or inject settings_display.html:`, error);
+            // 可以在这里向用户显示错误，或者在 #extensions_settings 中追加一个错误消息
+            settingsContainer.append(`<div style="color:red;">Error loading settings for ${PLUGIN_NAME}: ${error.message || error}</div>`);
         }
     }
 
-    // 注册设置UI生成函数
-    // SillyTavern 应该提供一个方法来注册这个回调
-    // 示例：SillyTavern.registerExtensionSettingsPanel(EXTENSION_NAME, buildSettingsUI);
-    // 或者，如果它提供一个容器节点：
-    if (typeof getExtensionSettingsNode === 'function') {
-        settingsNode = getExtensionSettingsNode(EXTENSION_NAME); // 获取SillyTavern为这个扩展准备的设置容器
-        if (settingsNode) {
-            buildSettingsUI().then(uiElement => {
-                if (uiElement) {
-                    settingsNode.appendChild(uiElement);
-                    console.log(`${EXTENSION_NAME}: Settings UI injected into provided node.`);
-                }
-            }).catch(error => {
-                console.error(`${EXTENSION_NAME}: Error building and injecting settings UI:`, error);
-                if(settingsNode) settingsNode.textContent = 'Error loading settings.';
-            });
-        } else {
-            console.warn(`${EXTENSION_NAME}: Could not get a settings node from SillyTavern.`);
-        }
-    } else if (typeof registerExtensionSettings === 'function') { // 假设有这样的注册函数
-         registerExtensionSettings(EXTENSION_NAME, {
-            name: 'BR标签显隐控制', // 显示在设置列表中的名字
-            contentBuildFunction: buildSettingsUI, // SillyTavern会调用这个函数
-         });
-         console.log(`${EXTENSION_NAME}: Settings UI build function registered.`);
-    }
-     else {
-        console.warn(`${EXTENSION_NAME}: No known mechanism to register or inject settings UI.`);
-        // 作为最后的手段，如果知道固定的目标容器ID，并且上述机制都没有
-        // (不推荐，因为这使得扩展与SillyTavern的UI结构紧密耦合)
-        // const targetContainer = document.getElementById('extensions_settings_specific_area_for_br-tags-visibility');
-        // if (targetContainer) {
-        // buildSettingsUI().then(uiElement => targetContainer.appendChild(uiElement));
-        // }
+    // --- 主逻辑 ---
+
+    // 监听SillyTavern的某个事件，表示UI已准备好接受扩展设置
+    // 或者，如果SillyTavern期望扩展在加载时立即注入，则直接调用
+    // 例如，如果 'tavern_init_complete' 是这样一个事件：
+    // eventSource.on(event_types.TAVERN_INIT_COMPLETE, loadAndInjectSettingsUI);
+    // 如果没有特定的“UI就绪”事件，我们就在扩展脚本首次执行时尝试加载
+    // 但这可能太早，#extensions_settings 可能还不存在。
+
+    // 为了测试，我们直接调用。如果失败，说明调用时机不对或路径/函数问题。
+    // 在实际应用中，这个调用应该在一个更合适的时机，例如当用户打开扩展设置面板时，
+    // 或者SillyTavern提供一个特定的回调注册机制。
+    // 如果这个扩展在SillyTavern的扩展管理界面有自己的“设置”按钮，
+    // 那么点击那个按钮时，SillyTavern内部应该触发某个机制，此时才是注入的好时机。
+    // **如果SillyTavern是期望在“扩展设置”面板打开时，由扩展自己填充内容，
+    // 那么我们需要一个方法来知道这个面板何时打开。**
+
+    // **折中方案：** 由于我们不知道SillyTavern确切的机制，
+    // 并且你坚持用你提供的方式，我们假设这个调用在扩展加载时就是合适的。
+    // 同时，我们不再依赖 manifest.json 中的 settings_display_file 字段，
+    // 因为我们现在是手动加载。你可以考虑从 manifest.json 中移除它，以避免混淆。
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        // DOM基本加载完成
+        loadAndInjectSettingsUI();
+    } else {
+        // 否则等待DOM加载
+        document.addEventListener('DOMContentLoaded', loadAndInjectSettingsUI);
     }
 
 
@@ -157,8 +165,8 @@ import { eventSource, event_types } from '../../../../script.js';
         applyBrVisibility();
     });
 
-    applyBrVisibility();
+    applyBrVisibility(); // 初始应用一次
 
-    console.log(`SillyTavern Extension: ${EXTENSION_NAME} (BR标签显隐控制) 已加载。`);
+    console.log(`SillyTavern Extension: ${PLUGIN_NAME} (BR标签显隐控制) 已加载，并尝试注入设置UI。`);
 
 })();
