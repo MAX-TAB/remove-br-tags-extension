@@ -1,11 +1,12 @@
 {
-  "display_name": "BR标签显隐控制",
-  "loading_order": 100,
+  "display_name": "BR标签显示控制",
+  "loading_order": 10,
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "qwerty",
   "version": "1.0.0",
-  "homePage": ""
+  "homePage": "https://github.com/MAX-TAB/remove-br-tags-extension",
+  "auto_update": true
 }
