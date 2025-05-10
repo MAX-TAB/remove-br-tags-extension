@@ -2,27 +2,56 @@
 <div class="br-tags-control-settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>BR标签显示控制</b>
+            <b>BR标签高级控制</b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
-            <p>控制页面上br标签的显示与隐藏。</p>
+            <p>精细控制页面上 <br> 标签的显示与行为。</p>
 
-            <div class="br-tags-control_block flex-container">
-                <input id="st-br-control-chat" type="checkbox" />
-                <label for="st-br-control-chat">隐藏聊天消息中的br标签</label>
-            </div>
-            <small>此选项会隐藏聊天对话气泡内文本的br换行。</small>
+            <fieldset>
+                <legend>聊天消息内 <br> 标签处理:</legend>
+                <div class="br-tags-control_block flex-container">
+                    <input id="st-br-chat-hide-all" type="checkbox" />
+                    <label for="st-br-chat-hide-all">隐藏所有聊天消息中的 <br></label>
+                </div>
+                <small>如果勾选此项，以下聊天相关的特定规则将可能被覆盖。</small>
+
+                <hr class="sysHR" />
+
+                <div class="br-tags-control_block flex-container">
+                    <input id="st-br-chat-hide-leading" type="checkbox" />
+                    <label for="st-br-chat-hide-leading">隐藏聊天消息开头的 <br></label>
+                </div>
+                <small>移除或隐藏每条聊天消息最开始的换行。</small>
+
+                <div class="br-tags-control_block flex-container">
+                    <input id="st-br-chat-merge-consecutive" type="checkbox" />
+                    <label for="st-br-chat-merge-consecutive">合并聊天消息中连续的 <br> (保留一个)</label>
+                </div>
+                <small>例如，将 <br><br><br> 处理为单个换行效果。</small>
+
+                <div class="br-tags-control_block flex-container">
+                    <input id="st-br-chat-smart-external" type="checkbox" />
+                    <label for="st-br-chat-smart-external">智能保留聊天内必要的 <br> (实验性)</label>
+                </div>
+                <small>尝试识别并保留被其他HTML标签（如<p>, <div>, <li>等）包裹的<br>，只处理“裸露”的<br>。此规则较复杂，可能不完美。</small>
+            </fieldset>
 
             <hr class="sysHR" />
 
-            <div class="br-tags-control_block flex-container">
-                <input id="st-br-control-global" type="checkbox" />
-                <label for="st-br-control-global">隐藏整个界面中的br标签 (谨慎使用!)</label>
-            </div>
-            <small style="color: orange;">警告：此选项会尝试隐藏页面上所有br标签，可能导致某些UI元素显示异常。请谨慎开启。</small>
+            <fieldset>
+                <legend>全局 <br> 标签处理:</legend>
+                <div class="br-tags-control_block flex-container">
+                    <input id="st-br-global-hide-all" type="checkbox" />
+                    <label for="st-br-global-hide-all">隐藏整个界面中的所有 <br> (谨慎!)</label>
+                </div>
+                <small style="color: orange;">警告：此选项会隐藏页面上所有 <br> 标签，可能导致UI异常。</small>
+            </fieldset>
 
             <hr class="sysHR" />
+            <button id="st-br-apply-rules-now" class="menu_button">立即应用当前规则</button>
+            <small>更改设置后会自动应用。此按钮用于手动强制刷新规则。</small>
+
         </div>
     </div>
 </div>
