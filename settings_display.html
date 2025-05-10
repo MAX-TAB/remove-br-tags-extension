@@ -1,100 +1,32 @@
 <!-- SillyTavern/public/scripts/extensions/third-party/remove-br-tags-extension/settings_display.html -->
-<div class="br-tags-visibility-settings inline-drawer"> <!-- 模仿 star 插件的类名结构 -->
-    <div class="inline-drawer-toggle inline-drawer-header"> <!-- 模仿 star 插件的类名结构 -->
-        <b>BR标签显隐控制</b>
-        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div> <!-- 模仿 star 插件的图标 -->
-    </div>
-    <div class="inline-drawer-content" style="padding: 10px;"> <!-- 模仿 star 插件的类名结构 -->
-        <p>此设置允许您控制聊天消息中或整个界面中HTML <code><br></code> 标签的显示与隐藏。</p>
-        <div class="fields" style="margin-top: 10px;">
-            <div class="field">
-                <div class="field_inline">
-                    <label for="br_ext_hide_chat_br_toggle">隐藏聊天消息中的 <br> 标签</label>
-                    <input type="checkbox" id="br_ext_hide_chat_br_toggle" />
-                </div>
-                <div class="description">
-                    选中后，仅聊天消息区域的 <br> 换行标签将被视觉上隐藏。
-                </div>
-            </div>
-            <div class="field" style="margin-top: 10px;">
-                <div class="field_inline">
-                    <label for="br_ext_hide_all_br_toggle">隐藏整个界面的 <br> 标签</label>
-                    <input type="checkbox" id="br_ext_hide_all_br_toggle" />
-                </div>
-                <div class="description">
-                    选中后，SillyTavern 整个界面中的所有 <br> 换行标签将被视觉上隐藏。
-                    <strong>注意:</strong> 此选项会覆盖上面的 "仅聊天消息" 选项。
-                </div>
-            </div>
+<div class="br-tags-visibility-settings"> <!-- 使用一个特定于插件的根类名 -->
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>BR标签显隐控制</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
-        <p style="font-size: 0.9em; margin-top: 15px; color: var(--SmartThemeFgMuted);">更改将立即生效并自动保存。</p>
+        <div class="inline-drawer-content">
+            <p style="margin-bottom: 15px;">控制聊天消息中或整个界面中HTML <code><br></code> 标签的显示与隐藏。</p>
+
+            <div class="br-tags-extension_block flex-container" style="align-items: center; margin-bottom: 10px;">
+                <input id="br_ext_hide_chat_br_toggle" type="checkbox" />
+                <label for="br_ext_hide_chat_br_toggle" style="margin-left: 8px;">隐藏聊天消息中的 <br> 标签</label>
+            </div>
+            <small class="description" style="display: block; margin-left: 25px; margin-bottom:15px;">
+                选中后，仅聊天消息区域的 <br> 换行标签将被视觉上隐藏。
+            </small>
+
+            <div class="br-tags-extension_block flex-container" style="align-items: center; margin-bottom: 10px;">
+                <input id="br_ext_hide_all_br_toggle" type="checkbox" />
+                <label for="br_ext_hide_all_br_toggle" style="margin-left: 8px;">隐藏整个界面的 <br> 标签</label>
+            </div>
+            <small class="description" style="display: block; margin-left: 25px; margin-bottom:15px;">
+                选中后，SillyTavern 整个界面中的所有 <br> 换行标签将被视觉上隐藏。<br>
+                <strong>注意:</strong> 此选项会覆盖上面的 "仅聊天消息" 选项。
+            </small>
+
+            <hr class="sysHR" /> <!-- 分隔线，模仿范例 -->
+            <p style="font-size:0.85em; color:var(--SmartThemeFgMuted); margin-top:10px;">更改将立即生效并自动保存。</p>
+        </div>
     </div>
 </div>
-
-<script>
-    (function() {
-        // 确保 SillyTavern 核心对象在脚本执行时可用
-        if (!window.SillyTavern || !window.SillyTavern.getContext || !window.SillyTavern.extension_settings || !window.SillyTavern.saveSettingsDebounced) {
-            console.error("BR标签显隐控制 (settings_display.html): SillyTavern core objects not found.");
-            return;
-        }
-
-        const { extension_settings, saveSettingsDebounced } = SillyTavern;
-        const pluginFolderName = 'remove-br-tags-extension'; // 确保与文件夹名和 index.js 中的 pluginName 一致
-
-        const chatBrToggle = document.getElementById('br_ext_hide_chat_br_toggle');
-        const allBrToggle = document.getElementById('br_ext_hide_all_br_toggle');
-
-        if (!chatBrToggle || !allBrToggle) {
-            console.error(`BR标签显隐控制 (settings_display.html for ${pluginFolderName}): Toggle checkboxes not found.`);
-            return;
-        }
-
-        function getPluginSettings() {
-            const defaultSettings = { hideChatBr: false, hideAllBr: false };
-            if (!extension_settings[pluginFolderName]) {
-                extension_settings[pluginFolderName] = { ...defaultSettings };
-            } else {
-                for (const key in defaultSettings) {
-                    if (typeof extension_settings[pluginFolderName][key] === 'undefined') {
-                        extension_settings[pluginFolderName][key] = defaultSettings[key];
-                    }
-                }
-            }
-            return extension_settings[pluginFolderName];
-        }
-
-        function loadSettingsToUI() {
-            const settings = getPluginSettings();
-            chatBrToggle.checked = settings.hideChatBr;
-            allBrToggle.checked = settings.hideAllBr;
-            // 初始加载时，尝试调用 index.js 中的 applyVisibility (如果已暴露)
-            applyVisibilityFromIndex(settings);
-        }
-
-        function applyVisibilityFromIndex(currentSettings) {
-            if (window.extensions && window.extensions[pluginFolderName] && typeof window.extensions[pluginFolderName].applyVisibility === 'function') {
-                window.extensions[pluginFolderName].applyVisibility(currentSettings);
-            } else {
-                // console.warn(`BR标签显隐控制 (settings_display.html for ${pluginFolderName}): index.js function applyVisibility not found.`);
-            }
-        }
-
-        chatBrToggle.addEventListener('change', function() {
-            const settings = getPluginSettings();
-            settings.hideChatBr = this.checked;
-            saveSettingsDebounced();
-            applyVisibilityFromIndex(settings);
-        });
-
-        allBrToggle.addEventListener('change', function() {
-            const settings = getPluginSettings();
-            settings.hideAllBr = this.checked;
-            saveSettingsDebounced();
-            applyVisibilityFromIndex(settings);
-        });
-
-        loadSettingsToUI();
-        // console.log(`BR标签显隐控制 (settings_display.html for ${pluginFolderName}): UI script initialized.`);
-    })();
-</script>
