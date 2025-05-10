@@ -1,0 +1,11 @@
+/* SillyTavern/data/your_user_handle/extensions/remove-br-tags/style.css */
+
+/* 当 body.ext-hide-chat-br-tags 类存在时，聊天消息中的 br 标签会被隐藏 */
+body.ext-hide-chat-br-tags .mes br {
+    display: none !important;
+}
+
+/* 当 body.ext-hide-all-br-tags 类存在时，整个页面的 br 标签都会被隐藏 */
+body.ext-hide-all-br-tags br {
+    display: none !important;
+}

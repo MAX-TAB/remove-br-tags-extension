@@ -1,0 +1,108 @@
+<!-- SillyTavern/data/your_user_handle/extensions/remove-br-tags/settings_display.html -->
+<div class="br-tags-visibility-settings">
+    <h4>BR标签显隐设置</h4>
+    <div class="inline-drawer">
+        <div class="fields">
+            <!-- 开关一：仅聊天消息 -->
+            <div class="field">
+                <div class="field_inline">
+                    <label for="ext_hide_chat_br_toggle">隐藏聊天消息中的 <br> 标签</label>
+                    <input type="checkbox" id="ext_hide_chat_br_toggle" />
+                </div>
+                <div class="description">
+                    选中后，仅聊天消息区域的 <br> 换行标签将被视觉上隐藏。
+                </div>
+            </div>
+
+            <!-- 开关二：整个界面 -->
+            <div class="field">
+                <div class="field_inline">
+                    <label for="ext_hide_all_br_toggle">隐藏整个界面的 <br> 标签</label>
+                    <input type="checkbox" id="ext_hide_all_br_toggle" />
+                </div>
+                <div class="description">
+                    选中后，SillyTavern 整个界面中的所有 <br> 换行标签将被视觉上隐藏。
+                    <strong>注意:</strong> 此选项会覆盖上面的 "仅聊天消息" 选项。
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        if (!window.SillyTavern || !SillyTavern.getContext) {
+            console.error("BR标签显隐控制: SillyTavern context not found.");
+            return;
+        }
+
+        const context = SillyTavern.getContext();
+        const { extensionSettings, saveSettingsDebounced } = context;
+        const MODULE_NAME = 'brTagsVisibilityExtension'; // 更新模块名
+
+        const chatBrToggle = document.getElementById('ext_hide_chat_br_toggle');
+        const allBrToggle = document.getElementById('ext_hide_all_br_toggle');
+
+        if (!chatBrToggle || !allBrToggle) {
+            console.error("BR标签显隐控制: Toggle checkboxes not found.");
+            return;
+        }
+
+        // 获取或初始化设置
+        function getModuleSettings() {
+            const defaultSettings = {
+                hideChatBr: false,
+                hideAllBr: false
+            };
+            if (!extensionSettings[MODULE_NAME]) {
+                extensionSettings[MODULE_NAME] = { ...defaultSettings };
+            }
+            // 确保所有键都存在
+            for (const key in defaultSettings) {
+                if (typeof extensionSettings[MODULE_NAME][key] === 'undefined') {
+                    extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+                }
+            }
+            return extensionSettings[MODULE_NAME];
+        }
+
+        // 加载设置并更新UI
+        function loadSettings() {
+            const settings = getModuleSettings();
+            chatBrToggle.checked = settings.hideChatBr;
+            allBrToggle.checked = settings.hideAllBr;
+
+            // 初始加载时应用样式
+            if (window.extensions && window.extensions.brTagsVisibility && typeof window.extensions.brTagsVisibility.applyVisibility === 'function') {
+                window.extensions.brTagsVisibility.applyVisibility(settings);
+            }
+        }
+
+        // 处理聊天消息BR开关变化
+        chatBrToggle.addEventListener('change', function() {
+            const settings = getModuleSettings();
+            settings.hideChatBr = this.checked;
+            // 如果“隐藏全部”是开启的，那么“隐藏聊天”开启与否不重要，但仍保存其状态
+            saveSettingsDebounced();
+            triggerApplyVisibility(settings);
+        });
+
+        // 处理整个界面BR开关变化
+        allBrToggle.addEventListener('change', function() {
+            const settings = getModuleSettings();
+            settings.hideAllBr = this.checked;
+            saveSettingsDebounced();
+            triggerApplyVisibility(settings);
+        });
+
+        function triggerApplyVisibility(settings) {
+            if (window.extensions && window.extensions.brTagsVisibility && typeof window.extensions.brTagsVisibility.applyVisibility === 'function') {
+                window.extensions.brTagsVisibility.applyVisibility(settings);
+            } else {
+                console.warn("BR标签显隐控制: index.js中的applyVisibility函数未找到。");
+            }
+        }
+
+        loadSettings();
+    })();
+</script>

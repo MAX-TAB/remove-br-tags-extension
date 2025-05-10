@@ -1,0 +1,13 @@
+{
+  "display_name": "BR标签显隐控制",
+  "author": "qwerty",
+  "version": "0.1",
+  "description": "在扩展设置中提供开关，用于显示或隐藏聊天消息中或整个界面的<br>标签。",
+  "js": "index.js",
+  "css": "style.css",
+  "settings_display_file": "settings_display.html",
+  "requires": [],
+  "optional": [],
+  "loading_order": 100,
+  "homePage": ""
+}
