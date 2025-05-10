@@ -1,8 +1,5 @@
 // remove-br-tags-extension/index.js
 
-// 注意：这个版本直接使用localStorage，绕过了SillyTavern的extension_settings
-// 仅在标准持久化机制确认无效时作为备选方案使用。
-
 // 插件名称，也用作localStorage的键前缀
 const extensionName = "remove-br-tags-extension";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
