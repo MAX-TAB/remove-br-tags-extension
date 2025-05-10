@@ -1,9 +1,17 @@
-/* SillyTavern/public/scripts/extensions/third-party/remove-br-tags-extension/style.css */
-
-body.ext-hide-chat-br-tags .mes br {
-    display: none !important;
+/* remove-br-tags-extension/style.css */
+.br-tags-control-settings .br-tags-control_block {
+    align-items: center; /* 垂直居中复选框和标签 */
+    margin-bottom: 5px;
 }
 
-body.ext-hide-all-br-tags br {
-    display: none !important;
+.br-tags-control-settings .br-tags-control_block input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+.br-tags-control-settings small {
+    display: block;
+    margin-top: -3px;
+    margin-bottom: 10px;
+    font-size: 0.9em;
+    color: var(--text_secondary);
 }
