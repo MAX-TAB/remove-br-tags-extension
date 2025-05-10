@@ -3,7 +3,7 @@
 // --- 常量和全局变量 ---
 const extensionName = "remove-br-tags-extension";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-const LOCAL_STORAGE_KEY = `st-ext-${extensionName}-settings-v6`;
+const LOCAL_STORAGE_KEY = `st-ext-${extensionName}-settings-v7`; // 版本号再升，确保测试干净状态
 
 const defaultSettings = {
     enableBrCleanup: true,
@@ -15,10 +15,10 @@ const ORIGINAL_DISPLAY_STYLE_ATTR = 'data-br-original-display';
 const PROCESSED_BY_PLUGIN_ATTR = 'data-br-processed-by-cleanup';
 
 let currentSettings = loadSettingsFromLocalStorage();
-let isApplyingRules = false;
-let applyRulesTimeoutId = null;
+let isApplyingRules = false; // 用于防止 cleanupBrTags 重入
+let lastScheduledCleanupId = null; // 用于管理 setTimeout/requestAnimationFrame
 
-// --- 设置加载与保存 ---
+// --- 设置加载与保存 (不变) ---
 function loadSettingsFromLocalStorage() {
     try {
         const storedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -26,23 +26,18 @@ function loadSettingsFromLocalStorage() {
             const parsedSettings = JSON.parse(storedSettings);
             return { ...defaultSettings, ...parsedSettings };
         }
-    } catch (error) {
-        console.error(`[${extensionName}] 加载设置错误:`, error);
-    }
+    } catch (error) { console.error(`[${extensionName}] 加载设置错误:`, error); }
     return { ...defaultSettings };
 }
-
 function saveSettingsToLocalStorage(settings) {
     try {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settings));
-    } catch (error) {
-        console.error(`[${extensionName}] 保存设置错误:`, error);
-    }
+    } catch (error) { console.error(`[${extensionName}] 保存设置错误:`, error); }
 }
 
-// --- DOM 操作核心 ---
+// --- DOM 操作核心 (与上一版v6基本一致，关键在于调用时机) ---
 function revertBrModificationsInContainer(container) {
-    if (!container || typeof container.querySelectorAll !== 'function') return; // 安全检查
+    if (!container || typeof container.querySelectorAll !== 'function') return;
     container.querySelectorAll(`br[${PROCESSED_BY_PLUGIN_ATTR}]`).forEach(br => {
         if (br.hasAttribute(ORIGINAL_DISPLAY_STYLE_ATTR)) {
             br.style.display = br.getAttribute(ORIGINAL_DISPLAY_STYLE_ATTR);
@@ -54,42 +49,10 @@ function revertBrModificationsInContainer(container) {
     });
 }
 
-function getPreviousValidSibling(node) {
-    if (!node) return null;
-    let sibling = node.previousSibling;
-    while (sibling) {
-        if (sibling.nodeType === Node.ELEMENT_NODE) return sibling;
-        if (sibling.nodeType === Node.TEXT_NODE && sibling.textContent.trim() !== '') return sibling;
-        sibling = sibling.previousSibling;
-    }
-    return null;
-}
+function getPreviousValidSibling(node) { /* ...不变... */ if(!node)return null;let s=node.previousSibling;while(s){if(s.nodeType===1||(s.nodeType===3&&s.textContent.trim()!==''))return s;s=s.previousSibling}return null }
+function getNextValidSibling(node) { /* ...不变... */ if(!node)return null;let s=node.nextSibling;while(s){if(s.nodeType===1||(s.nodeType===3&&s.textContent.trim()!==''))return s;s=s.nextSibling}return null }
+function isTextualNode(node) { /* ...不变... */ if(!node)return!1;if(node.nodeType===3&&node.textContent.trim()!=='')return!0;if(node.nodeType===1){const i=['SPAN','EM','STRONG','A','I','B','U','CODE','SAMP','KBD','VAR','SUB','SUP','Q','CITE','ABBR','DFN'];if(i.includes(node.nodeName.toUpperCase()))return!0;const t=['DIV','P','H1','H2','H3','H4','H5','H6','UL','OL','LI','BLOCKQUOTE','PRE','TABLE','HR','MAGIC_STATUS'];if(t.includes(node.nodeName.toUpperCase()))return!1}return!1}
 
-function getNextValidSibling(node) {
-    if (!node) return null;
-    let sibling = node.nextSibling;
-    while (sibling) {
-        if (sibling.nodeType === Node.ELEMENT_NODE) return sibling;
-        if (sibling.nodeType === Node.TEXT_NODE && sibling.textContent.trim() !== '') return sibling;
-        sibling = sibling.nextSibling;
-    }
-    return null;
-}
-
-function isTextualNode(node) {
-    if (!node) return false;
-    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') return true;
-    if (node.nodeType === Node.ELEMENT_NODE) {
-        const inlineTextContainers = ['SPAN', 'EM', 'STRONG', 'A', 'I', 'B', 'U', 'CODE', 'SAMP', 'KBD', 'VAR', 'SUB', 'SUP', 'Q', 'CITE', 'ABBR', 'DFN'];
-        if (inlineTextContainers.includes(node.nodeName.toUpperCase())) return true;
-        const blockOrSpecialElements = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'TABLE', 'HR', 'MAGIC_STATUS'];
-        if (blockOrSpecialElements.includes(node.nodeName.toUpperCase())) return false;
-        // 对于其他未明确的元素节点，如果其子节点中没有块级元素，可以认为它是文本容器的延续
-        // 为简化，此处不做更深层判断
-        return false;
-    }
-    return false;
-}
 
 function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = null) {
     if (isApplyingRules) {
@@ -98,19 +61,29 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
     }
     isApplyingRules = true;
     // console.time(`[${extensionName}] cleanupBrTags (${source})`);
+    // console.log(`[${extensionName}] cleanupBrTags 执行开始 (源: ${source}, 特定容器: ${!!specificMessageContainer})`);
 
     const settings = currentSettings;
 
     try {
-        const chatMessageSelectorsArray = [ // 确保这是一个数组
+        const chatMessageSelectorsArray = [
             '.mes_text', '.mes .force-user-msg .mes_text', '.mes .force-char-msg .mes_text',
             'div[id^="chatMessage"] .mes_text', '.message-content', '.chitchat-text'
         ];
-        const chatMessageQuerySelector = chatMessageSelectorsArray.join(', '); // 正确生成查询字符串
+        const chatMessageQuerySelector = chatMessageSelectorsArray.join(', ');
 
         const containersToProcess = specificMessageContainer ?
-            (specificMessageContainer.matches && specificMessageContainer.matches(chatMessageQuerySelector) ? [specificMessageContainer] : []) : // 检查 matches 方法是否存在
-            document.querySelectorAll(chatMessageQuerySelector);
+            (specificMessageContainer.matches && specificMessageContainer.matches(chatMessageQuerySelector) ? [specificMessageContainer] : []) :
+            Array.from(document.querySelectorAll(chatMessageQuerySelector)); // 转换为数组以便安全迭代
+
+        if (containersToProcess.length === 0 && specificMessageContainer) {
+            // console.log(`[${extensionName}] specificMessageContainer 未匹配任何聊天选择器，尝试直接处理:`, specificMessageContainer);
+            // 如果 specificMessageContainer 存在但不是标准聊天容器，也尝试处理它（例如，如果是 .mes 本身）
+            if (specificMessageContainer && typeof specificMessageContainer.querySelectorAll === 'function') {
+                 containersToProcess.push(specificMessageContainer);
+            }
+        }
+
 
         containersToProcess.forEach(chatContainer => {
             if (!chatContainer || typeof chatContainer.querySelectorAll !== 'function') return;
@@ -118,7 +91,7 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
             revertBrModificationsInContainer(chatContainer);
 
             if (!settings.enableBrCleanup) {
-                return;
+                return; // 如果总开关关闭，则恢复后直接返回
             }
 
             let brNodesInContainer = Array.from(chatContainer.querySelectorAll('br'));
@@ -135,9 +108,8 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
                         if (nextAfterSpecial && nextAfterSpecial.nodeName === 'BR') {
                             nodesToHide.push(nextAfterSpecial);
                         }
-                        if (isTextualNode(nextAfterSpecial)) break; // 如果后面是文本，则开头扫描结束
+                        if (isTextualNode(nextAfterSpecial)) break;
                     } else if (currentNode.nodeType === Node.ELEMENT_NODE && isTextualNode(currentNode)) {
-                        // 如果是一个文本性元素（如<span>text</span>），则认为开头扫描结束
                         break;
                     }
                     currentNode = currentNode.nextSibling;
@@ -150,15 +122,13 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
                         br.setAttribute(PROCESSED_BY_PLUGIN_ATTR, 'true');
                     }
                 });
-                // 更新brNodesInContainer，排除已被隐藏的
-                brNodesInContainer = brNodesInContainer.filter(br => br.style.display !== 'none' || !br.hasAttribute(PROCESSED_BY_PLUGIN_ATTR));
+                brNodesInContainer = brNodesInContainer.filter(br => !(br.style.display === 'none' && br.hasAttribute(PROCESSED_BY_PLUGIN_ATTR)));
             }
 
 
             brNodesInContainer.forEach(br => {
-                // 如果已被其他规则隐藏，跳过 (虽然上面已经 filter 了一次，双重保险)
                 if (br.style.display === 'none' && br.hasAttribute(PROCESSED_BY_PLUGIN_ATTR)) {
-                    return;
+                    return; // 已被 hideLeadingBrInMessage 处理
                 }
 
                 let shouldKeep = false;
@@ -171,18 +141,16 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
                 }
 
                 if (shouldKeep) {
-                    if (br.style.display === 'none') { // 理论上不应是none，因为上面filter了
-                        if (br.hasAttribute(ORIGINAL_DISPLAY_STYLE_ATTR)) {
-                            br.style.display = br.getAttribute(ORIGINAL_DISPLAY_STYLE_ATTR);
-                        } else {
-                            br.style.display = '';
-                        }
+                    // 确保可见，并标记
+                    if (br.style.display === 'none') { // 不应发生，因为我们已经 filter 了
+                         br.style.display = br.hasAttribute(ORIGINAL_DISPLAY_STYLE_ATTR) ? br.getAttribute(ORIGINAL_DISPLAY_STYLE_ATTR) : '';
                     }
                     br.setAttribute(PROCESSED_BY_PLUGIN_ATTR, 'true');
                 } else {
+                    // 默认隐藏其他所有
                     if (br.style.display !== 'none') {
                         const currentDisplay = window.getComputedStyle(br).display;
-                        if (currentDisplay !== 'none') br.setAttribute(ORIGINAL_DISPLAY_STYLE_ATTR, currentDisplay);
+                         if (currentDisplay !== 'none') br.setAttribute(ORIGINAL_DISPLAY_STYLE_ATTR, currentDisplay);
                         br.style.display = 'none';
                         br.setAttribute(PROCESSED_BY_PLUGIN_ATTR, 'true');
                     }
@@ -194,17 +162,34 @@ function cleanupBrTags(source = "unknown_cleanup", specificMessageContainer = nu
     } finally {
         isApplyingRules = false;
         // console.timeEnd(`[${extensionName}] cleanupBrTags (${source})`);
+        // console.log(`[${extensionName}] cleanupBrTags 执行完毕 (源: ${source})`);
     }
 }
 
-// --- UI 更新与事件处理 ---
-function updateUIFromSettings() {
-    const s = currentSettings;
-    $('#st-br-enable-cleanup').prop('checked', s.enableBrCleanup);
-    $('#st-br-keep-between-text').prop('checked', s.keepBrBetweenText);
-    $('#st-br-hide-leading-br').prop('checked', s.hideLeadingBrInMessage);
+/**
+ * 统一的延迟执行 cleanupBrTags 的函数，会清除之前的计划。
+ * @param {string} source
+ * @param {number} delayMs
+ * @param {HTMLElement|null} specificContainer
+ */
+function scheduleCleanup(source, delayMs, specificContainer = null) {
+    // console.log(`[${extensionName}] 计划 cleanup (源: ${source}, 延迟: ${delayMs}ms, 特定容器: ${!!specificContainer})`);
+    if (lastScheduledCleanupId) {
+        clearTimeout(lastScheduledCleanupId); // 清除上一个setTimeout
+        // 如果是requestAnimationFrame，则用 cancelAnimationFrame(lastScheduledCleanupId)
+    }
+    lastScheduledCleanupId = setTimeout(() => {
+        // 使用 requestAnimationFrame 确保在浏览器准备好绘制时执行，减少闪烁
+        requestAnimationFrame(() => {
+            cleanupBrTags(source, specificContainer);
+        });
+        lastScheduledCleanupId = null; // 执行后清除ID
+    }, delayMs);
 }
 
+
+// --- UI 更新与事件处理 ---
+function updateUIFromSettings() { /* ...不变... */ const s=currentSettings;$("#st-br-enable-cleanup").prop("checked",s.enableBrCleanup);$("#st-br-keep-between-text").prop("checked",s.keepBrBetweenText);$("#st-br-hide-leading-br").prop("checked",s.hideLeadingBrInMessage)}
 function onSettingsChange(event) {
     const targetId = event.target.id;
     const checked = Boolean(event.target.checked);
@@ -215,194 +200,161 @@ function onSettingsChange(event) {
         default: return;
     }
     saveSettingsToLocalStorage(currentSettings);
-    requestAnimationFrame(() => cleanupBrTags("settingsChange"));
+    scheduleCleanup("settingsChange", 50); // 设置更改后，短延迟应用
 }
 
 // --- DOM 变化监听 (MutationObserver) ---
 let chatObserver = null;
-const ST_EDIT_TEXTAREA_SELECTOR = '.mes_textarea, textarea.auto-size'; // SillyTavern编辑框选择器
+const ST_EDIT_TEXTAREA_SELECTOR = '.mes_textarea, textarea.auto-size';
 
 function observeChatMessages() {
-    const debouncedCleanup = debounce(() => {
-        requestAnimationFrame(() => cleanupBrTags("mutationObserver_debounced"));
-    }, 400); // 增加防抖延迟
+    const chatMessageSelectorsArray = [ /* ...同 cleanupBrTags 内的定义... */
+        '.mes_text', '.mes .force-user-msg .mes_text', '.mes .force-char-msg .mes_text',
+        'div[id^="chatMessage"] .mes_text', '.message-content', '.chitchat-text'
+    ];
+    const chatMessageQuerySelector = chatMessageSelectorsArray.join(', ');
 
-    // 聊天区域选择器，更精确一点
-    const chatAreaSelectors = ['#chat', '.chat-messages-container', '.message_chat'];
+    const chatAreaSelectors = ['#chat', '.chat-messages-container', '.message_chat']; // 优先选择更具体的聊天区域
     let mainChatArea = null;
     for (const selector of chatAreaSelectors) {
         mainChatArea = document.querySelector(selector);
         if (mainChatArea) break;
     }
-    // 如果找不到精确的，再回退到body，但给出警告
     if (!mainChatArea) {
-        console.warn(`[${extensionName}] 未找到精确的聊天区域，MutationObserver 将监听 body。`);
+        console.warn(`[${extensionName}] 未找到主要聊天区域，MutationObserver 将监听 document.body。`);
         mainChatArea = document.body;
     }
 
     if (chatObserver) chatObserver.disconnect();
 
     chatObserver = new MutationObserver((mutationsList) => {
-        let needsGlobalCleanup = false;
-        let editedMessageContainer = null; // 用于标记是否是编辑操作相关的DOM变化
+        let needsGlobalCleanupDebounced = false;
+        let processedEditExit = false; // 标记是否已处理了本次mutation中的编辑退出
 
         for (const mutation of mutationsList) {
             if (mutation.type === 'childList') {
-                // 检测进入编辑模式 (textarea 添加)
+                // 进入编辑模式
                 for (const node of mutation.addedNodes) {
                     if (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(ST_EDIT_TEXTAREA_SELECTOR)) {
-                        // 获取 textarea 所在的父消息容器
-                        editedMessageContainer = node.closest(chatMessageSelectorsArray.join(', '));
-                        if (editedMessageContainer) {
-                            // console.log(`[${extensionName}] 进入编辑模式，恢复此容器BR:`, editedMessageContainer);
-                            revertBrModificationsInContainer(editedMessageContainer); // 恢复原始BR供编辑
+                        const editedContainer = node.closest(chatMessageQuerySelector);
+                        if (editedContainer) {
+                            // console.log(`[${extensionName}] MO: 进入编辑，恢复BR于:`, editedContainer);
+                            revertBrModificationsInContainer(editedContainer);
+                            processedEditExit = true; // 标记本次mutation是编辑相关的，避免全局刷新
                         }
-                        break; // 找到编辑框，跳出内层addedNodes循环
+                        break;
                     }
                 }
-                if (editedMessageContainer) break; // 如果已处理编辑框添加，跳出外层mutationsList循环
+                if (processedEditExit) continue; // 如果是进入编辑，不检查后续，等待退出编辑
 
-                // 检测退出编辑模式 (textarea 移除)
+                // 退出编辑模式
                 for (const node of mutation.removedNodes) {
                     if (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(ST_EDIT_TEXTAREA_SELECTOR)) {
-                        // mutation.target 是 textarea 被移除前其所在的父节点
-                        editedMessageContainer = mutation.target.closest(chatMessageSelectorsArray.join(', '));
-                        if (editedMessageContainer) {
-                            // console.log(`[${extensionName}] 退出编辑模式，处理此容器:`, editedMessageContainer);
-                            clearTimeout(applyRulesTimeoutId); // 清除可能存在的全局延迟调用
-                            // 针对性、稍延迟地处理这个刚编辑完的容器
-                            applyRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => cleanupBrTags("edit_mode_exit", editedMessageContainer)), 200);
+                        const parentOfTextarea = mutation.target;
+                        const exitedContainer = parentOfTextarea.closest(chatMessageQuerySelector);
+                        if (exitedContainer) {
+                            // console.log(`[${extensionName}] MO: 退出编辑，处理:`, exitedContainer);
+                            scheduleCleanup("edit_mode_exit_mo", 150, exitedContainer); // 稍快反应
+                            processedEditExit = true;
                         } else {
-                            // 如果找不到特定容器（理论上不应发生），则标记需要全局清理
-                            needsGlobalCleanup = true;
+                            needsGlobalCleanupDebounced = true; // 找不到特定容器，准备全局
                         }
-                        break; // 找到移除的编辑框
+                        break;
                     }
                 }
-                if (editedMessageContainer) break; // 如果已处理编辑框移除，跳出外层
+                if (processedEditExit) continue; // 如果是退出编辑，不检查后续
 
-                // 检测新消息添加 (非编辑模式触发时)
-                if (!editedMessageContainer) {
+                // 新消息添加 (非编辑模式触发)
+                if (!processedEditExit) {
                     for (const node of mutation.addedNodes) {
-                        // 检查添加的节点是否是消息本身或包含消息文本的元素
                         if (node.nodeType === Node.ELEMENT_NODE && node.matches && (node.matches('.mes') || node.querySelector('.mes_text'))) {
-                            needsGlobalCleanup = true;
+                            // console.log(`[${extensionName}] MO: 新消息添加，准备全局清理。`);
+                            needsGlobalCleanupDebounced = true;
                             break;
                         }
                     }
                 }
             }
-            // 如果已标记需要全局清理或已处理编辑容器，则不再检查其他mutation记录
-            if (needsGlobalCleanup || editedMessageContainer) break;
+            if (needsGlobalCleanupDebounced) break; // 如果已确定需要全局清理，跳出
         }
 
-        // 只有在确实需要全局清理，并且不是因为编辑操作触发时，才调用debouncedCleanup
-        if (needsGlobalCleanup && !editedMessageContainer) {
-            debouncedCleanup();
+        if (needsGlobalCleanupDebounced && !processedEditExit) { // 确保不是编辑操作导致的全局清理
+            scheduleCleanup("mutationObserver_global_debounced", 400); // 全局清理用稍长防抖
         }
     });
     chatObserver.observe(mainChatArea, { childList: true, subtree: true });
     // console.log(`[${extensionName}] MutationObserver已启动，监听目标:`, mainChatArea);
 }
 
-
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const context = this;
-        const later = function() {
-            timeout = null;
-            func.apply(context, args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
 // --- SillyTavern 事件集成 ---
-let eventSourceInstance, eventTypesInstance; // 在外部声明，以便模块加载后赋值
 function setupSillyTavernEventListeners() {
     try {
-        import('../../../../script.js') // 确保路径正确
+        import('../../../../script.js')
             .then(module => {
                 eventSourceInstance = module.eventSource;
                 eventTypesInstance = module.event_types;
                 if (eventSourceInstance && eventTypesInstance) {
-                    const cleanupAfterEvent = (source, delay = 350, specificTarget = null) => { // 增加默认延迟
-                        clearTimeout(applyRulesTimeoutId);
-                        applyRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => cleanupBrTags(source, specificTarget)), delay);
-                    };
-                    eventSourceInstance.on(eventTypesInstance.CHAT_UPDATED, () => cleanupAfterEvent("CHAT_UPDATED", 450)); // 编辑后给更长延迟
-                    eventSourceInstance.on(eventTypesInstance.MESSAGE_SWIPED, () => cleanupAfterEvent("MESSAGE_SWIPED", 380));
-                    eventSourceInstance.on(eventTypesInstance.USER_MESSAGE_SENT, () => cleanupAfterEvent("USER_MESSAGE_SENT", 320));
-                    eventSourceInstance.on(eventTypesInstance.CHARACTER_MESSAGE_RECEIVED, () => cleanupAfterEvent("CHARACTER_MESSAGE_RECEIVED", 320));
+                    // AI回复是最需要快速响应的
+                    eventSourceInstance.on(eventTypesInstance.CHARACTER_MESSAGE_RECEIVED, () => scheduleCleanup("CHARACTER_MESSAGE_RECEIVED", 100)); // AI回复，延迟短一些
+                    eventSourceInstance.on(eventTypesInstance.USER_MESSAGE_SENT, () => scheduleCleanup("USER_MESSAGE_SENT", 200));
+                    // CHAT_UPDATED 通常在编辑保存后触发，这是关键
+                    eventSourceInstance.on(eventTypesInstance.CHAT_UPDATED, (data) => {
+                        // console.log(`[${extensionName}] ST Event: CHAT_UPDATED, data:`, data);
+                        // CHAT_UPDATED 可能会传递被更新消息的ID或元素，但我们目前还是全局或基于MO的特定容器处理
+                        scheduleCleanup("CHAT_UPDATED", 250); // 编辑后延迟
+                    });
+                    eventSourceInstance.on(eventTypesInstance.MESSAGE_SWIPED, () => scheduleCleanup("MESSAGE_SWIPED", 300));
                     eventSourceInstance.on(eventTypesInstance.CHAT_CHANGED, () => {
-                        clearTimeout(applyRulesTimeoutId);
-                        applyRulesTimeoutId = setTimeout(() => {
-                            requestAnimationFrame(() => {
-                                currentSettings = loadSettingsFromLocalStorage();
-                                updateUIFromSettings();
-                                cleanupBrTags("CHAT_CHANGED_completed");
-                            });
-                        }, 850); // 切换聊天给最长延迟
+                        scheduleCleanup("CHAT_CHANGED_loadsettings", 700); // 给聊天切换最长延迟
+                        // 在scheduleCleanup的回调中也可以做 currentSettings = loadSettingsFromLocalStorage(); updateUIFromSettings();
+                        // 但为了简化，目前只在CHAT_CHANGED时，由scheduleCleanup内部的cleanupBrTags触发全局处理
+                        // 如果确实需要在CHAT_CHANGED时重载设置并更新UI，可以这样做：
+                        // clearTimeout(lastScheduledCleanupId);
+                        // lastScheduledCleanupId = setTimeout(() => {
+                        //     requestAnimationFrame(() => {
+                        //         console.log(`[${extensionName}] CHAT_CHANGED: Reloading settings and UI.`);
+                        //         currentSettings = loadSettingsFromLocalStorage();
+                        //         updateUIFromSettings();
+                        //         cleanupBrTags("CHAT_CHANGED_completed");
+                        //     });
+                        // }, 700);
                     });
                     // console.log(`[${extensionName}] ST事件监听器已设置。`);
-                } else {
-                    // console.warn(`[${extensionName}] eventSource 或 event_types 未从 script.js 正确导入。`);
                 }
             })
-            .catch(err => {
-                // console.warn(`[${extensionName}] 从 script.js 导入 ST 事件系统失败:`, err.message);
-            });
-    } catch (e) {
-        // console.warn(`[${extensionName}] 尝试导入 ST 事件系统时发生同步错误:`, e.message);
-    }
+            .catch(err => { /* console.warn(...) */ });
+    } catch (e) { /* console.warn(...) */ }
 }
 
 // --- 初始化 ---
-jQuery(async () => { // 确保 jQuery 已加载
+jQuery(async () => {
     try {
-        // 确保 settings.html 中的 ID 与 jQuery 选择器匹配
         const settingsHtmlPath = `${extensionFolderPath}/settings.html`;
-        const settingsHtml = await $.get(settingsHtmlPath); // 使用 jQuery 的 $.get
-        const $extensionsSettingsContainer = $("#extensions_settings"); // jQuery 对象
-
-        if ($extensionsSettingsContainer.length) { // 检查jQuery对象是否找到了元素
+        const settingsHtml = await $.get(settingsHtmlPath);
+        const $extensionsSettingsContainer = $("#extensions_settings");
+        if ($extensionsSettingsContainer.length) {
             $extensionsSettingsContainer.append(settingsHtml);
-        } else {
-            console.warn(`[${extensionName}] #extensions_settings 容器未找到。设置面板可能无法显示。`);
-        }
+        } else { console.warn(`[${extensionName}] #extensions_settings 未找到.`); }
 
-        // 事件委托，确保即使HTML是后加载的，事件也能绑定
-        // 确保 settings.html 的根 div 有 id="remove-br-tags-extension-settings-container"
         $(document).on('input', '#remove-br-tags-extension-settings-container input[type="checkbox"]', onSettingsChange);
         $(document).on('click', '#remove-br-tags-extension-settings-container #st-br-apply-rules-now', () => {
-            if (typeof toastr !== 'undefined') {
-                toastr.info("手动应用BR清理规则...", extensionName, { timeOut: 1000 });
-            }
-            requestAnimationFrame(() => cleanupBrTags("manualApplyButton"));
+            if (typeof toastr !== 'undefined') toastr.info("手动应用BR清理规则...", extensionName, { timeOut: 1000 });
+            scheduleCleanup("manualApplyButton", 0); // 手动应用，无延迟
         });
 
         currentSettings = loadSettingsFromLocalStorage();
-        updateUIFromSettings(); // 确保UI在HTML附加后更新
+        updateUIFromSettings();
 
-        // 首次加载时，给予更长的延迟，确保所有内容（包括聊天）都已渲染
-        requestAnimationFrame(() => {
-            setTimeout(() => {
-                cleanupBrTags("initialLoad_delayed");
-            }, 1000); // 增加到1秒
-        });
+        scheduleCleanup("initialLoad_delayed", 1000); // 初始加载给予最长延迟
 
         observeChatMessages();
         setupSillyTavernEventListeners();
 
-        console.log(`[${extensionName}] 插件初始化成功 (v6). 使用存储键: ${LOCAL_STORAGE_KEY}`);
+        console.log(`[${extensionName}] 插件初始化成功 (v7). 使用存储键: ${LOCAL_STORAGE_KEY}`);
 
     } catch (error) {
-        console.error(`[${extensionName}] 初始化过程中发生严重错误:`, error, error.stack); // 添加错误堆栈
-        if (typeof toastr !== 'undefined') {
-            toastr.error(`插件 "${extensionName}" 初始化失败。详情请查看浏览器控制台。`, "插件错误", { timeOut: 0 });
-        }
-        alert(`插件 "${extensionName}" 初始化时发生严重错误，可能无法正常工作。请按F12打开浏览器控制台，查看详细的错误信息和堆栈。`);
+        console.error(`[${extensionName}] 初始化严重错误:`, error, error.stack);
+        if (typeof toastr !== 'undefined') toastr.error(`插件 "${extensionName}" 初始化失败。查看控制台。`, "插件错误", { timeOut: 0 });
+        alert(`插件 "${extensionName}" 初始化错误。F12查看控制台。`);
     }
 });
