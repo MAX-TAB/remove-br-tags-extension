@@ -391,7 +391,7 @@ try {
                 });
 
                 // 监听角色加载事件，以处理开场白
-                // SillyTavern的 `キャラクターがロードされました` (character_loaded) 事件可能不是标准API的一部分，
+                // SillyTavern的 character_loaded 事件可能不是标准API的一部分，
                 // 但 `CONTEXT_UPDATED` 或 `CHAT_CHANGED` 通常在角色加载后发生。
                 // 我们已经在监听 CHAT_CHANGED。
                 // 另一种可能是DOM加载完成后，如果开场白是静态的，初始的applyBrRules应该能处理。
