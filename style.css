@@ -1,6 +1,6 @@
 /* remove-br-tags-extension/style.css */
 .br-tags-control-settings .br-tags-control_block {
-    align-items: center; /* 垂直居中复选框和标签 */
+    align-items: center;
     margin-bottom: 5px;
 }
 
@@ -14,4 +14,17 @@
     margin-bottom: 10px;
     font-size: 0.9em;
     color: var(--text_secondary);
+}
+
+.br-tags-control-settings fieldset {
+    border: 1px solid var(--border_color);
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+}
+
+.br-tags-control-settings legend {
+    padding: 0 5px;
+    font-weight: bold;
+    color: var(--text_color);
 }
