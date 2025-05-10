@@ -6,51 +6,60 @@
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
-            <p>精细控制页面上 <br> 标签的显示与行为。</p>
+            <p>精细控制页面上换行标签的行为，改善阅读体验。</p> <!-- 替换了可能存在的<br> -->
 
             <fieldset>
-                <legend>聊天消息内 <br> 标签处理:</legend>
+                <legend>聊天消息内换行处理:</legend> <!-- legend 通常单行 -->
                 <div class="br-tags-control_block flex-container">
                     <input id="st-br-chat-hide-all" type="checkbox" />
-                    <label for="st-br-chat-hide-all">隐藏所有聊天消息中的 <br></label>
+                    <label for="st-br-chat-hide-all">隐藏所有聊天消息中的换行</label> <!-- label 通常单行 -->
                 </div>
-                <small>如果勾选此项，以下聊天相关的特定规则将可能被覆盖。</small>
+                <small>若勾选，将覆盖下方聊天相关的特定规则。</small>
 
                 <hr class="sysHR" />
 
                 <div class="br-tags-control_block flex-container">
                     <input id="st-br-chat-hide-leading" type="checkbox" />
-                    <label for="st-br-chat-hide-leading">隐藏聊天消息开头的 <br></label>
+                    <label for="st-br-chat-hide-leading">隐藏聊天消息开头的换行</label>
                 </div>
-                <small>移除或隐藏每条聊天消息最开始的换行。</small>
+                <small>移除或隐藏每条聊天消息最开始的多余换行。</small>
 
                 <div class="br-tags-control_block flex-container">
                     <input id="st-br-chat-merge-consecutive" type="checkbox" />
-                    <label for="st-br-chat-merge-consecutive">合并聊天消息中连续的 <br> (保留一个)</label>
+                    <label for="st-br-chat-merge-consecutive">合并聊天消息中连续的换行 (保留一个)</label>
                 </div>
-                <small>例如，将 <br><br><br> 处理为单个换行效果。</small>
+                <small>例如，多个连续换行将只显示为一个换行的效果。</small>
 
                 <div class="br-tags-control_block flex-container">
                     <input id="st-br-chat-smart-external" type="checkbox" />
-                    <label for="st-br-chat-smart-external">智能保留聊天内必要的 <br> (实验性)</label>
+                    <label for="st-br-chat-smart-external">智能保留聊天内必要的换行 (实验性)</label>
                 </div>
-                <small>尝试识别并保留被其他HTML标签（如<p>, <div>, <li>等）包裹的<br>，只处理“裸露”的<br>。此规则较复杂，可能不完美。</small>
+                <small>
+                    尝试识别并保留被其他HTML块级标签（如段落、列表项等）包裹的换行。
+                    此规则主要处理“裸露”的换行，可能不完美。
+                </small> <!-- <small>可以多行，浏览器会自动处理 -->
             </fieldset>
 
             <hr class="sysHR" />
 
             <fieldset>
-                <legend>全局 <br> 标签处理:</legend>
+                <legend>全局换行处理:</legend>
                 <div class="br-tags-control_block flex-container">
                     <input id="st-br-global-hide-all" type="checkbox" />
-                    <label for="st-br-global-hide-all">隐藏整个界面中的所有 <br> (谨慎!)</label>
+                    <label for="st-br-global-hide-all">隐藏整个界面中的所有换行 (谨慎!)</label>
                 </div>
-                <small style="color: orange;">警告：此选项会隐藏页面上所有 <br> 标签，可能导致UI异常。</small>
+                <small style="color: orange;">
+                    警告：此选项会尝试隐藏页面上所有换行标签。
+                    这可能导致某些UI元素显示异常，请谨慎开启。
+                </small>
             </fieldset>
 
             <hr class="sysHR" />
             <button id="st-br-apply-rules-now" class="menu_button">立即应用当前规则</button>
-            <small>更改设置后会自动应用。此按钮用于手动强制刷新规则。</small>
+            <small>
+                更改设置后规则会自动应用。
+                此按钮用于在需要时手动强制刷新规则的执行。
+            </small>
 
         </div>
     </div>
