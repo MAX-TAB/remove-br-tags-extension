@@ -3,25 +3,29 @@
 // --- 常量和全局变量 ---
 const extensionName = "remove-br-tags-extension";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-const LOCAL_STORAGE_KEY = `st-ext-${extensionName}-settings-v4`; // 再次升级版本号，因为逻辑有较大调整
+const LOCAL_STORAGE_KEY = `st-ext-${extensionName}-settings-v5`; // 版本号再次升级
 
 const defaultSettings = {
-    chatHideAllBr: false,
+    chatHideAllBr: false,       // 主要由此规则控制CSS注入
     chatHideLeadingBr: true,
     chatMergeConsecutiveBr: true,
-    chatSmartExternalBr: false,
-    globalHideAllBr: false,
+    chatSmartExternalBr: false, // JS DOM操作
+    globalHideAllBr: false,     // CSS注入
 };
 
-const ORIGINAL_DISPLAY_ATTR = 'data-original-display';
-const PROCESSED_BY_PLUGIN_ATTR = 'data-br-processed'; // 标记被本插件处理过
-const MODIFIED_BY_PLUGIN_STYLE_ATTR = 'data-br-style-modified'; // 标记其style.display被本插件修改过
+// 插件动态添加的<style>标签的ID
+const DYNAMIC_STYLE_TAG_ID = `${extensionName}-dynamic-styles`;
+
+// 用于JS DOM操作的属性
+const ORIGINAL_DISPLAY_ATTR = 'data-original-display'; // 不再主要使用，因为CSS优先
+const PROCESSED_BY_JS_ATTR = 'data-br-js-processed'; // 标记被JS复杂逻辑处理过
+const JS_HIDDEN_BY_RULE_ATTR = 'data-br-js-hidden-by';
 
 let currentSettings = loadSettingsFromLocalStorage();
-let isApplyingRules = false;
-let applyRulesTimeoutId = null;
+let isApplyingJsRules = false; // JS规则应用的重入保护
+let applyJsRulesTimeoutId = null;
 
-// --- 设置加载与保存 (与之前版本相同) ---
+// --- 设置加载与保存 (不变) ---
 function loadSettingsFromLocalStorage() {
     try {
         const storedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -32,179 +36,165 @@ function loadSettingsFromLocalStorage() {
     } catch (error) { console.error(`[${extensionName}] 加载设置错误:`, error); }
     return { ...defaultSettings };
 }
-
 function saveSettingsToLocalStorage(settings) {
     try {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settings));
     } catch (error) { console.error(`[${extensionName}] 保存设置错误:`, error); }
 }
 
-// --- DOM 操作核心 ---
-function revertBrModificationsInContainer(container) {
-    // 只恢复指定容器内的BR标签
-    container.querySelectorAll(`br[${PROCESSED_BY_PLUGIN_ATTR}]`).forEach(br => {
-        if (br.hasAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR)) {
-            const originalDisplay = br.getAttribute(ORIGINAL_DISPLAY_ATTR);
-            br.style.display = originalDisplay || ''; // 恢复
-            br.removeAttribute(ORIGINAL_DISPLAY_ATTR);
-            br.removeAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR);
+// --- 核心逻辑 ---
+
+/**
+ * 根据当前设置更新动态<style>标签中的CSS规则。
+ * 主要处理全局性的隐藏规则。
+ */
+function updateDynamicCssRules() {
+    const settings = currentSettings;
+    let cssRules = "";
+
+    const chatMessageSelectorsArr = [ // 保持与JS中一致的选择器
+        '.mes_text', '.mes .force-user-msg .mes_text', '.mes .force-char-msg .mes_text',
+        'div[id^="chatMessage"] .mes_text', '.message-content', '.chitchat-text',
+        '.custom-message-class'
+    ];
+    const chatSelectors = chatMessageSelectorsArr.join(', ');
+
+    if (settings.globalHideAllBr) {
+        cssRules += `body br { display: none !important; }\n`;
+    } else {
+        // 如果全局不隐藏，但聊天内隐藏
+        if (settings.chatHideAllBr) {
+            cssRules += `${chatSelectors} br { display: none !important; }\n`;
+        } else {
+            // 如果chatHideAllBr也是false，那么之前由它注入的CSS需要被清除
+            // 这里通过不添加规则来实现。如果style标签中只有这一条，它会被清空。
         }
-        br.removeAttribute(PROCESSED_BY_PLUGIN_ATTR); // 移除处理标记，以便重新评估
-        br.removeAttribute(HIDDEN_BY_RULE_ATTR);
+    }
+
+    let styleTag = document.getElementById(DYNAMIC_STYLE_TAG_ID);
+    if (!styleTag) {
+        styleTag = document.createElement('style');
+        styleTag.id = DYNAMIC_STYLE_TAG_ID;
+        styleTag.type = 'text/css';
+        document.head.appendChild(styleTag);
+    }
+
+    if (styleTag.textContent !== cssRules) {
+        styleTag.textContent = cssRules;
+        // console.log(`[${extensionName}] 动态CSS规则已更新:`, cssRules.trim() === "" ? "无规则 (清除)" : cssRules);
+    }
+}
+
+/**
+ * 清除指定容器内由JS DOM操作添加的属性和内联样式。
+ * 在重新应用JS规则前调用。
+ * @param {HTMLElement} container
+ */
+function revertJsBrModificationsInContainer(container) {
+    container.querySelectorAll(`br[${PROCESSED_BY_JS_ATTR}]`).forEach(br => {
+        // 移除内联style（如果是由JS添加的）
+        // 我们不再存储originalDisplay，因为CSS优先，JS只在CSS不隐藏时操作
+        // 如果JS隐藏了它，直接移除内联style就会让CSS规则或默认display生效
+        br.style.display = ''; // 清除JS设置的内联display
+        br.removeAttribute(PROCESSED_BY_JS_ATTR);
+        br.removeAttribute(JS_HIDDEN_BY_RULE_ATTR);
     });
 }
 
-function markBrAsHidden(brElement, ruleName) {
-    if (!brElement || typeof brElement.hasAttribute !== 'function') return;
-
-    // 只要规则要求隐藏，并且它当前不是none，就隐藏它
-    // 无论之前是否处理过，都要确保它是隐藏的
-    if (brElement.style.display !== 'none') {
-        const currentDisplay = window.getComputedStyle(brElement).display;
-        if (currentDisplay !== 'none' && !brElement.hasAttribute(ORIGINAL_DISPLAY_ATTR)) {
-            brElement.setAttribute(ORIGINAL_DISPLAY_ATTR, currentDisplay);
-        }
-        brElement.style.display = 'none';
-        brElement.setAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR, 'true'); // 标记style被修改
-    }
-    brElement.setAttribute(PROCESSED_BY_PLUGIN_ATTR, 'true'); // 总是标记为处理过
-    brElement.setAttribute(HIDDEN_BY_RULE_ATTR, ruleName);
-}
-
-function markBrAsVisible(brElement, ruleName) {
-    if (!brElement || typeof brElement.hasAttribute !== 'function') return;
-
-    // 规则要求可见（豁免/保留）
-    if (brElement.style.display === 'none' && brElement.hasAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR)) {
-        const originalDisplay = brElement.getAttribute(ORIGINAL_DISPLAY_ATTR);
-        brElement.style.display = originalDisplay || ''; // 恢复
-        // 可以选择移除MODIFIED_BY_PLUGIN_STYLE_ATTR，或者保留它并更新HIDDEN_BY_RULE_ATTR
-    }
-    brElement.setAttribute(PROCESSED_BY_PLUGIN_ATTR, 'true');
-    brElement.setAttribute(HIDDEN_BY_RULE_ATTR, `exempted_by_${ruleName}`); // 或 kept_by_
-}
-
-
-function applyBrRules(source = "unknown", specificMessageContainer = null) {
-    if (isApplyingRules) {
-        // console.log(`[${extensionName}] applyBrRules 跳过 (源: ${source}, isApplyingRules: true)`);
+/**
+ * 应用需要JavaScript DOM操作的复杂规则。
+ * (如合并连续、隐藏开头、智能判断)
+ * 这个函数只在 chatHideAllBr 和 globalHideAllBr 都为 false 时才应该有实际效果。
+ * @param {string} source
+ * @param {HTMLElement|null} specificMessageContainer
+ */
+function applyJsComplexBrRules(source = "unknown_js_rules", specificMessageContainer = null) {
+    if (isApplyingJsRules) {
+        // console.log(`[${extensionName}] applyJsComplexBrRules 跳过 (源: ${source}, isApplyingJsRules: true)`);
         return;
     }
-    isApplyingRules = true;
-    // console.time(`[${extensionName}] applyBrRules (${source})`);
+    isApplyingJsRules = true;
+    // console.time(`[${extensionName}] applyJsComplexBrRules (${source})`);
 
     const settings = currentSettings;
 
+    // 如果CSS规则已经隐藏了所有相关的BR，则JS无需再做处理
+    if (settings.globalHideAllBr || settings.chatHideAllBr) {
+        isApplyingJsRules = false;
+        // console.timeEnd(`[${extensionName}] applyJsComplexBrRules (${source}) - CSS已隐藏，JS跳过`);
+        return;
+    }
+
     try {
-        // 如果是全局应用（非特定消息容器），则先恢复所有
-        if (!specificMessageContainer) {
-            document.querySelectorAll(`br[${PROCESSED_BY_PLUGIN_ATTR}]`).forEach(br => {
-                 if (br.hasAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR)) {
-                    const originalDisplay = br.getAttribute(ORIGINAL_DISPLAY_ATTR);
-                    br.style.display = originalDisplay || '';
-                    br.removeAttribute(ORIGINAL_DISPLAY_ATTR);
-                    br.removeAttribute(MODIFIED_BY_PLUGIN_STYLE_ATTR);
-                }
-                br.removeAttribute(PROCESSED_BY_PLUGIN_ATTR);
-                br.removeAttribute(HIDDEN_BY_RULE_ATTR);
-            });
-        } else {
-            // 如果是针对特定消息容器，则只恢复该容器内的
-            revertBrModificationsInContainer(specificMessageContainer);
-        }
-
-
-        if (settings.globalHideAllBr && !specificMessageContainer) {
-            document.querySelectorAll('body br').forEach(br => markBrAsHidden(br, 'globalHideAllBr'));
-            isApplyingRules = false;
-            // console.timeEnd(`[${extensionName}] applyBrRules (${source})`);
-            return;
-        }
-
-        const chatMessageSelectors = [ /* ...保持不变... */
+        const chatMessageSelectorsArr = [ /* ...同上... */
             '.mes_text', '.mes .force-user-msg .mes_text', '.mes .force-char-msg .mes_text',
             'div[id^="chatMessage"] .mes_text', '.message-content', '.chitchat-text',
             '.custom-message-class'
         ];
         
-        // 确定要处理的容器：要么是指定的，要么是所有匹配的
         const containersToProcess = specificMessageContainer ?
-            (specificMessageContainer.matches(chatMessageSelectors.join(',')) ? [specificMessageContainer] : []) :
-            document.querySelectorAll(chatMessageSelectors.join(', '));
+            (specificMessageContainer.matches(chatMessageSelectorsArr.join(',')) ? [specificMessageContainer] : []) :
+            document.querySelectorAll(chatMessageSelectorsArr.join(', '));
 
         containersToProcess.forEach(chatContainer => {
-            if (!chatContainer || typeof chatContainer.querySelectorAll !== 'function') {
-                // console.warn(`[${extensionName}] 无效的 chatContainer 跳过:`, chatContainer);
-                return;
-            }
+            if (!chatContainer || typeof chatContainer.querySelectorAll !== 'function') return;
 
-            // 获取当前容器内所有的<br>元素，这是我们操作的基础集合
-            // 注意：如果SillyTavern在编辑时完全替换了消息内容（包括BR），
-            // 那么这里的querySelectorAll得到的就是最新的BR列表。
-            let brNodesInContainer = Array.from(chatContainer.querySelectorAll('br'));
+            // 在处理此容器前，清除之前JS操作的痕迹
+            revertJsBrModificationsInContainer(chatContainer);
 
-            // 首先应用最强的隐藏规则：chatHideAllBr
-            if (settings.chatHideAllBr) {
-                brNodesInContainer.forEach(br => markBrAsHidden(br, 'chatHideAllBr'));
-                // console.log(`[${extensionName}] 应用 chatHideAllBr 到容器`);
-                return; // 如果全部隐藏，此容器的其他规则不适用
-            }
+            // 获取当前实际可见的<br>列表（即未被CSS规则隐藏的）
+            // 这一步很关键，我们只对CSS规则处理后仍然可见的<br>应用JS逻辑
+            let brNodesInContainer = Array.from(chatContainer.querySelectorAll('br'))
+                                          .filter(br => window.getComputedStyle(br).display !== 'none');
 
-            // 应用其他细分规则 (仅当 chatHideAllBr 为 false 时)
-
-            // 规则：隐藏开头BR
+            // 规则：隐藏开头BR (JS版)
             if (settings.chatHideLeadingBr) {
                 let firstNode = chatContainer.firstChild;
                 while (firstNode && firstNode.nodeType === Node.TEXT_NODE && firstNode.textContent.trim() === '') {
                     firstNode = firstNode.nextSibling;
                 }
-                if (firstNode && firstNode.nodeName === 'BR' && firstNode.style.display !== 'none') {
-                    markBrAsHidden(firstNode, 'chatHideLeadingBr');
+                if (firstNode && firstNode.nodeName === 'BR' && window.getComputedStyle(firstNode).display !== 'none') {
+                    firstNode.style.display = 'none'; // JS直接隐藏
+                    firstNode.setAttribute(PROCESSED_BY_JS_ATTR, 'true');
+                    firstNode.setAttribute(JS_HIDDEN_BY_RULE_ATTR, 'chatHideLeadingBr_js');
                 }
+                // 更新可见BR列表
+                brNodesInContainer = brNodesInContainer.filter(br => br !== firstNode || window.getComputedStyle(br).display !== 'none');
             }
 
-            // 更新brNodesInContainer列表，因为上面的规则可能已经隐藏了一些
-            brNodesInContainer = Array.from(chatContainer.querySelectorAll('br'));
-
-            // 规则：合并连续BR
+            // 规则：合并连续BR (JS版)
             if (settings.chatMergeConsecutiveBr) {
                 for (let i = 0; i < brNodesInContainer.length; i++) {
                     const currentBr = brNodesInContainer[i];
-                    // currentBr必须是可见的，才能作为保留的那个
-                    if (!currentBr || currentBr.style.display === 'none') {
+                    if (!currentBr || window.getComputedStyle(currentBr).display === 'none') { // 必须是当前可见的
                         continue;
                     }
 
                     let nextSignificantNode = currentBr.nextSibling;
-                    let consecutiveCount = 0;
                     while (nextSignificantNode) {
                         if (nextSignificantNode.nodeType === Node.TEXT_NODE && nextSignificantNode.textContent.trim() === '') {
                             nextSignificantNode = nextSignificantNode.nextSibling;
                             continue;
                         }
-                        if (nextSignificantNode.nodeName === 'BR') {
-                            // 只有当这个BR当前可见时，才隐藏它作为“连续”的一部分
-                            if (nextSignificantNode.style.display !== 'none') {
-                                markBrAsHidden(nextSignificantNode, 'chatMergeConsecutiveBr');
-                                consecutiveCount++;
-                            }
+                        if (nextSignificantNode.nodeName === 'BR' && window.getComputedStyle(nextSignificantNode).display !== 'none') {
+                            nextSignificantNode.style.display = 'none'; // JS直接隐藏
+                            nextSignificantNode.setAttribute(PROCESSED_BY_JS_ATTR, 'true');
+                            nextSignificantNode.setAttribute(JS_HIDDEN_BY_RULE_ATTR, 'chatMergeConsecutiveBr_js');
                             nextSignificantNode = nextSignificantNode.nextSibling;
                         } else {
                             break;
                         }
                     }
-                    // if (consecutiveCount > 0) console.log(`[${extensionName}] 合并了 ${consecutiveCount} 个连续BR`);
                 }
+                // 更新可见BR列表
+                brNodesInContainer = brNodesInContainer.filter(br => window.getComputedStyle(br).display !== 'none');
             }
 
-            // 再次更新brNodesInContainer列表
-            brNodesInContainer = Array.from(chatContainer.querySelectorAll('br'));
-
-            // 规则：智能保留/隐藏
+            // 规则：智能保留/隐藏 (JS版)
             if (settings.chatSmartExternalBr) {
-                const significantWrappers = ['P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE', 'TD', 'TH', 'SPAN']; // SPAN 有争议，但有时用于格式化
-                brNodesInContainer.forEach(br => {
-                    if (!br) return;
+                const significantWrappers = ['P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE', 'TD', 'TH', 'SPAN'];
+                brNodesInContainer.forEach(br => { // 只处理当前仍然可见的BR
+                    if (!br || window.getComputedStyle(br).display === 'none') return;
 
                     let parent = br.parentElement;
                     let isWrapped = false;
@@ -216,46 +206,30 @@ function applyBrRules(source = "unknown", specificMessageContainer = null) {
                         parent = parent.parentElement;
                     }
 
-                    const isCurrentlyHidden = br.style.display === 'none';
-                    const hiddenByRule = br.getAttribute(HIDDEN_BY_RULE_ATTR);
-
-                    if (isWrapped) { // 被包裹
-                        if (isCurrentlyHidden) {
-                            // 如果是被Leading或Merge规则隐藏的，则豁免它
-                            if (hiddenByRule === 'chatHideLeadingBr' || hiddenByRule === 'chatMergeConsecutiveBr') {
-                                markBrAsVisible(br, 'chatSmartExternalBr_exempt_wrapped');
-                            }
-                            // 如果是被本规则的hide_naked部分隐藏的（理论上不应发生，因为这是isWrapped分支），也豁免
-                            else if (hiddenByRule === 'chatSmartExternalBr_hide_naked') {
-                                markBrAsVisible(br, 'chatSmartExternalBr_exempt_previously_naked');
-                            }
-                        } else {
-                            // 本来就可见，标记为被保留
-                            markBrAsVisible(br, 'chatSmartExternalBr_kept_wrapped');
-                        }
-                    } else { // 裸露的BR
-                        if (!isCurrentlyHidden) {
-                            // 如果当前可见，并且不是被smart规则豁免或保留的，则隐藏它
-                             if (!hiddenByRule || (!hiddenByRule.includes('exempt') && !hiddenByRule.includes('kept'))) {
-                                markBrAsHidden(br, 'chatSmartExternalBr_hide_naked');
-                            }
-                        }
-                        // 如果是裸露的且已被隐藏（例如被Leading或Merge），则保持隐藏，除非有更强的豁免逻辑（目前没有）
+                    if (isWrapped) {
+                        // 被包裹，且当前可见，则标记为JS保留（实际上啥也不做，让它保持CSS或默认的可见）
+                        br.setAttribute(PROCESSED_BY_JS_ATTR, 'true');
+                        br.setAttribute(JS_HIDDEN_BY_RULE_ATTR, 'chatSmartExternalBr_js_kept_wrapped');
+                    } else { // 裸露的BR，且当前可见
+                        br.style.display = 'none'; // JS隐藏
+                        br.setAttribute(PROCESSED_BY_JS_ATTR, 'true');
+                        br.setAttribute(JS_HIDDEN_BY_RULE_ATTR, 'chatSmartExternalBr_js_hide_naked');
                     }
                 });
             }
         });
     } catch (error) {
-        console.error(`[${extensionName}] 在 applyBrRules 执行期间发生错误 (源: ${source}):`, error);
+        console.error(`[${extensionName}] 在 applyJsComplexBrRules 执行期间发生错误 (源: ${source}):`, error);
     } finally {
-        isApplyingRules = false;
-        // console.timeEnd(`[${extensionName}] applyBrRules (${source})`);
+        isApplyingJsRules = false;
+        // console.timeEnd(`[${extensionName}] applyJsComplexBrRules (${source})`);
     }
 }
 
 
-// --- UI 更新与事件处理 (与之前版本基本相同) ---
+// --- UI 更新与事件处理 ---
 function updateUIFromSettings() {
+    // ... (与之前版本相同) ...
     const s = currentSettings;
     $('#st-br-chat-hide-all').prop('checked', s.chatHideAllBr);
     $('#st-br-chat-hide-leading').prop('checked', s.chatHideLeadingBr);
@@ -269,32 +243,29 @@ function onSettingsChange(event) {
     const checked = Boolean(event.target.checked);
     switch (targetId) {
         case 'st-br-chat-hide-all': currentSettings.chatHideAllBr = checked; break;
-        // ... 其他case ...
         case 'st-br-chat-hide-leading': currentSettings.chatHideLeadingBr = checked; break;
         case 'st-br-chat-merge-consecutive': currentSettings.chatMergeConsecutiveBr = checked; break;
-        case 'st-br-chat-smart-external':
-            currentSettings.chatSmartExternalBr = checked;
-            if (checked && typeof toastr !== 'undefined') toastr.info("“智能保留/隐藏”规则已启用 (实验性)。", "提示", { timeOut: 3000 });
-            break;
-        case 'st-br-global-hide-all':
-            currentSettings.globalHideAllBr = checked;
-            if (checked && typeof toastr !== 'undefined') toastr.warning("全局隐藏 <br> 已启用。", "警告", { timeOut: 5000 });
-            break;
+        case 'st-br-chat-smart-external': currentSettings.chatSmartExternalBr = checked; break;
+        case 'st-br-global-hide-all': currentSettings.globalHideAllBr = checked; break;
         default: return;
     }
     saveSettingsToLocalStorage(currentSettings);
-    requestAnimationFrame(() => applyBrRules("settingsChange"));
+
+    // 首先更新CSS规则，这是即时生效的
+    updateDynamicCssRules();
+    // 然后，如果需要，应用复杂的JS规则 (CSS规则优先)
+    // 给一个非常短的延迟，确保CSS先生效
+    setTimeout(() => requestAnimationFrame(() => applyJsComplexBrRules("settingsChange_js_rules")), 50);
 }
 
-// --- DOM 变化监听 ---
+// --- DOM 变化监听 (MutationObserver) ---
 let chatObserver = null;
-// SillyTavern中消息编辑框的典型选择器 (可能需要根据版本调整)
-const ST_EDIT_TEXTAREA_SELECTOR = '.mes_textarea, textarea.auto-size'; // 或者更具体的选择器
+const ST_EDIT_TEXTAREA_SELECTOR = '.mes_textarea, textarea.auto-size';
 
 function observeChatMessages() {
-    const debouncedApplyRules = debounce(() => {
-        requestAnimationFrame(() => applyBrRules("mutationObserver_debounced_global"));
-    }, 350);
+    const debouncedApplyJsRules = debounce(() => {
+        requestAnimationFrame(() => applyJsComplexBrRules("mutationObserver_debounced_js_rules"));
+    }, 380); // JS规则的防抖可以稍长一些
 
     const chatAreaSelectors = ['#chat', '.chat-messages-container', '#chat-scroll-container', '.message_chat', 'body'];
     let mainChatArea = null;
@@ -307,61 +278,67 @@ function observeChatMessages() {
     if (chatObserver) chatObserver.disconnect();
 
     chatObserver = new MutationObserver((mutationsList) => {
-        let needsGlobalReapply = false;
-        let editedMessageContainer = null;
+        let needsJsRulesReapply = false; // 标记是否需要重新应用JS规则
+        let editedMessageContainer = null; // 标记当前是否在处理编辑相关的DOM变化
 
         for (const mutation of mutationsList) {
-            // 检查是否有消息进入或退出编辑模式
             if (mutation.type === 'childList') {
+                // 处理进入编辑模式 (textarea 添加)
                 for (const node of mutation.addedNodes) {
                     if (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(ST_EDIT_TEXTAREA_SELECTOR)) {
-                        // console.log(`[${extensionName}] 检测到消息进入编辑模式 (textarea 添加)`);
-                        // 当textarea出现时，其父消息容器的BR可能已被ST还原，我们不需要立即做什么，等textarea消失时处理
-                        editedMessageContainer = node.closest(chatMessageSelectors.join(','));
-                        if(editedMessageContainer) revertBrModificationsInContainer(editedMessageContainer); // 编辑时先恢复，让用户看到原始BR
-                        break;
-                    }
-                }
-                for (const node of mutation.removedNodes) {
-                     if (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(ST_EDIT_TEXTAREA_SELECTOR)) {
-                        // console.log(`[${extensionName}] 检测到消息退出编辑模式 (textarea 移除)`);
-                        // 编辑框消失，说明编辑已完成或取消，此时消息内容已更新
-                        editedMessageContainer = mutation.target.closest(chatMessageSelectors.join(',')); // target是textarea的父节点
+                        editedMessageContainer = node.closest(chatMessageSelectors.join(', '));
                         if (editedMessageContainer) {
-                            // console.log(`[${extensionName}] 针对退出编辑的消息容器应用规则:`, editedMessageContainer);
-                            // 针对这个特定容器应用规则，给一点延迟让ST完成自己的渲染
-                            clearTimeout(applyRulesTimeoutId);
-                            applyRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => applyBrRules("edit_mode_exit", editedMessageContainer)), 100);
-                        } else {
-                            needsGlobalReapply = true; // 如果找不到特定容器，就全局刷新
+                            // console.log(`[${extensionName}] 进入编辑模式，恢复容器内BR:`, editedMessageContainer);
+                            // 强制清除此容器的JS修改，让CSS或原始HTML生效
+                            revertJsBrModificationsInContainer(editedMessageContainer);
+                            // 编辑时CSS规则依然生效，所以如果chatHideAllBr=true，BR还是会被CSS隐藏
                         }
-                        break;
+                        break; // 找到编辑框，不再看其他addedNodes
                     }
                 }
-            }
+                if (editedMessageContainer) break; // 如果是进入编辑，跳出外层循环，本次不触发全局JS规则
 
-            // 检查是否有新消息添加
-            if (mutation.type === 'childList' && mutation.addedNodes.length > 0 && !editedMessageContainer) { // 避免编辑模式的重复触发
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType === Node.ELEMENT_NODE && node.matches && (node.matches('.mes') || node.querySelector('.mes_text, .message-content'))) {
-                        needsGlobalReapply = true;
-                        break;
+                // 处理退出编辑模式 (textarea 移除)
+                for (const node of mutation.removedNodes) {
+                    if (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(ST_EDIT_TEXTAREA_SELECTOR)) {
+                        // mutation.target 是 textarea 的前父节点
+                        const parentOfTextarea = mutation.target;
+                        editedMessageContainer = parentOfTextarea.closest(chatMessageSelectors.join(', '));
+                        if (editedMessageContainer) {
+                            // console.log(`[${extensionName}] 退出编辑模式，处理容器:`, editedMessageContainer);
+                            // 针对这个特定容器延迟应用JS规则
+                            clearTimeout(applyJsRulesTimeoutId);
+                            applyJsRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => applyJsComplexBrRules("edit_mode_exit_js_rules", editedMessageContainer)), 150);
+                        } else {
+                            needsJsRulesReapply = true; // 找不到特定容器，则全局刷新JS规则
+                        }
+                        break; // 找到移除的编辑框
+                    }
+                }
+                if (editedMessageContainer) break; // 如果是退出编辑，跳出外层循环
+
+                // 处理新消息添加 (非编辑模式时)
+                if (!editedMessageContainer) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType === Node.ELEMENT_NODE && node.matches && (node.matches('.mes') || node.querySelector('.mes_text, .message-content'))) {
+                            needsJsRulesReapply = true;
+                            break;
+                        }
                     }
                 }
             }
-            if (needsGlobalReapply || editedMessageContainer) break; // 如果已找到编辑相关或新消息，跳出外层循环
+            if (needsJsRulesReapply || editedMessageContainer) break;
         }
 
-        if (needsGlobalReapply && !editedMessageContainer) { // 只有在非编辑退出时才用debouncedApplyRules
-            debouncedApplyRules();
+        if (needsJsRulesReapply && !editedMessageContainer) {
+            debouncedApplyJsRules(); // 全局应用JS规则
         }
     });
-    chatObserver.observe(mainChatArea, { childList: true, subtree: true }); // 暂时去掉 characterData，看是否能减少不必要的触发
+    chatObserver.observe(mainChatArea, { childList: true, subtree: true });
 }
 
-
 function debounce(func, wait) {
-    // ... (与之前版本相同) ...
+    // ... (不变) ...
     let timeout;
     return function executedFunction(...args) {
         const context = this;
@@ -374,7 +351,7 @@ function debounce(func, wait) {
     };
 }
 
-// --- SillyTavern 事件集成 (与之前版本基本相同，但延迟和调用applyBrRules的source可能需要微调) ---
+// --- SillyTavern 事件集成 ---
 function setupSillyTavernEventListeners() {
     try {
         import('../../../../script.js')
@@ -382,39 +359,34 @@ function setupSillyTavernEventListeners() {
                 eventSourceInstance = module.eventSource;
                 eventTypesInstance = module.event_types;
                 if (eventSourceInstance && eventTypesInstance) {
-                    const applyRulesAfterEvent = (source, delay = 250, specificTarget = null) => {
-                        clearTimeout(applyRulesTimeoutId);
-                        applyRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => applyBrRules(source, specificTarget)), delay);
+                    const applyJsRulesAfterEvent = (source, delay = 280, specificTarget = null) => {
+                        clearTimeout(applyJsRulesTimeoutId);
+                        applyJsRulesTimeoutId = setTimeout(() => requestAnimationFrame(() => applyJsComplexBrRules(source, specificTarget)), delay);
                     };
-                    // CHAT_UPDATED 可能是编辑后触发的关键事件
-                    eventSourceInstance.on(eventTypesInstance.CHAT_UPDATED, (data) => {
-                        // data 对象可能包含被更新消息的 messageId 或 DOM element
-                        // console.log("[${extensionName}] CHAT_UPDATED data:", data);
-                        // let targetMessageElement = null;
-                        // if (data && data.id) targetMessageElement = document.querySelector(`.mes[mesid="${data.id}"] .mes_text`);
-                        // applyRulesAfterEvent("CHAT_UPDATED", 300, targetMessageElement);
-                        applyRulesAfterEvent("CHAT_UPDATED", 350); // 编辑后给更长延迟
-                    });
-                    eventSourceInstance.on(eventTypesInstance.MESSAGE_SWIPED, () => applyRulesAfterEvent("MESSAGE_SWIPED", 300));
-                    eventSourceInstance.on(eventTypesInstance.USER_MESSAGE_SENT, () => applyRulesAfterEvent("USER_MESSAGE_SENT", 250));
-                    eventSourceInstance.on(eventTypesInstance.CHARACTER_MESSAGE_RECEIVED, () => applyRulesAfterEvent("CHARACTER_MESSAGE_RECEIVED", 250));
+                    // CSS规则由 updateDynamicCssRules() 在设置更改时直接处理
+                    //这里的事件主要触发JS复杂规则的重新应用
+                    eventSourceInstance.on(eventTypesInstance.CHAT_UPDATED, () => applyJsRulesAfterEvent("CHAT_UPDATED_js_rules", 380));
+                    eventSourceInstance.on(eventTypesInstance.MESSAGE_SWIPED, () => applyJsRulesAfterEvent("MESSAGE_SWIPED_js_rules", 300));
+                    eventSourceInstance.on(eventTypesInstance.USER_MESSAGE_SENT, () => applyJsRulesAfterEvent("USER_MESSAGE_SENT_js_rules", 280));
+                    eventSourceInstance.on(eventTypesInstance.CHARACTER_MESSAGE_RECEIVED, () => applyJsRulesAfterEvent("CHARACTER_MESSAGE_RECEIVED_js_rules", 280));
                     eventSourceInstance.on(eventTypesInstance.CHAT_CHANGED, () => {
-                        clearTimeout(applyRulesTimeoutId);
-                        applyRulesTimeoutId = setTimeout(() => {
+                        clearTimeout(applyJsRulesTimeoutId);
+                        applyJsRulesTimeoutId = setTimeout(() => {
                             requestAnimationFrame(() => {
                                 currentSettings = loadSettingsFromLocalStorage();
                                 updateUIFromSettings();
-                                applyBrRules("CHAT_CHANGED_completed");
+                                updateDynamicCssRules(); // 切换聊天时，确保CSS规则也基于最新设置
+                                applyJsComplexBrRules("CHAT_CHANGED_completed_js_rules");
                             });
-                        }, 700);
+                        }, 750);
                     });
                 }
             })
-            .catch(err => { /* console.warn(`[${extensionName}] ST事件系统导入失败:`, err.message); */ });
-    } catch (e) { /* console.warn(`[${extensionName}] ST事件系统导入尝试错误:`, e.message); */ }
+            .catch(err => { /* console.warn(...) */ });
+    } catch (e) { /* console.warn(...) */ }
 }
 
-// --- 初始化 (与之前版本基本相同) ---
+// --- 初始化 ---
 jQuery(async () => {
     try {
         const settingsHtmlPath = `${extensionFolderPath}/settings.html`;
@@ -426,23 +398,25 @@ jQuery(async () => {
 
         $(document).on('input', '#remove-br-tags-extension-settings-container input[type="checkbox"]', onSettingsChange);
         $(document).on('click', '#remove-br-tags-extension-settings-container #st-br-apply-rules-now', () => {
-            if (typeof toastr !== 'undefined') toastr.info("手动应用规则...", extensionName, { timeOut: 1000 });
-            requestAnimationFrame(() => applyBrRules("manualApplyButton"));
+            if (typeof toastr !== 'undefined') toastr.info("手动应用所有规则...", extensionName, { timeOut: 1000 });
+            updateDynamicCssRules();
+            requestAnimationFrame(() => applyJsComplexBrRules("manualApplyButton_js_rules"));
         });
 
         currentSettings = loadSettingsFromLocalStorage();
         updateUIFromSettings();
+        updateDynamicCssRules(); // 首次加载时应用CSS规则
 
         requestAnimationFrame(() => {
             setTimeout(() => {
-                applyBrRules("initialLoad_delayed");
-            }, 850); // 进一步增加初始延迟
+                applyJsComplexBrRules("initialLoad_delayed_js_rules"); // 首次加载时应用JS规则
+            }, 900); // 进一步增加初始延迟
         });
 
         observeChatMessages();
         setupSillyTavernEventListeners();
 
-        console.log(`[${extensionName}] 插件初始化成功. 使用存储键: ${LOCAL_STORAGE_KEY}`);
+        console.log(`[${extensionName}] 插件初始化成功 (v5). CSS引擎和JS引擎已加载。`);
 
     } catch (error) {
         console.error(`[${extensionName}] 初始化严重错误:`, error);
